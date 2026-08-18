@@ -20,11 +20,14 @@ expo-env.d.ts
 
 # Metro
 .metro-health-check*
+.threaded-runtime/
 
 # debug
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+pnpm-debug.log*
+.pnpm-store/
 
 # macOS
 .DS_Store
@@ -41,3 +44,12 @@ example
 # generated native folders
 /ios
 /android
+.omx/
+.codex/*
+!.codex/agents/
+!.codex/agents/**
+!.codex/skills/
+!.codex/skills/**
+.codex/skills/.system/**
+!.codex/prompts/
+!.codex/prompts/**

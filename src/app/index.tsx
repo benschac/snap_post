@@ -51,7 +51,7 @@ export default function HomeScreen() {
           <HintRow title="Dev tools" hint={getDevMenuHint()} />
           <HintRow
             title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
+            hint={<ThemedText type="code">pnpm reset-project</ThemedText>}
           />
         </ThemedView>
 
