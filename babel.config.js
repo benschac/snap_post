@@ -3,6 +3,6 @@ module.exports = (api) => {
 
   return {
     presets: ['babel-preset-expo'],
-    plugins: ['unplugin-typegpu/babel'],
+    plugins: ['react-native-worklets/plugin'],
   };
 };

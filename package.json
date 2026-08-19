@@ -5,14 +5,12 @@
   "packageManager": "pnpm@11.22.0",
   "dependencies": {
     "@expo/ui": "~57.0.11",
-    "@react-native-runtimes/core": "0.1.0-alpha.2",
-    "@react-native-runtimes/state": "0.1.0-alpha.2",
     "@shopify/react-native-skia": "2.6.2",
-    "@typegpu/react": "^0.12.0",
     "expo": "~57.0.14",
     "expo-asset": "~57.0.12",
     "expo-build-properties": "~57.0.12",
     "expo-constants": "~57.0.12",
+    "expo-dev-client": "~57.0.13",
     "expo-device": "~57.0.1",
     "expo-file-system": "~57.0.4",
     "expo-font": "~57.0.1",
@@ -33,20 +31,20 @@
     "react-native-gesture-handler": "~2.32.0",
     "react-native-nitro-image": "^0.15.1",
     "react-native-nitro-modules": "^0.36.5",
+    "react-native-pulsar": "1.7.0",
     "react-native-reanimated": "4.5.1",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
     "react-native-vision-camera": "^5.2.2",
+    "react-native-vision-camera-barcode-scanner": "5.2.2",
+    "react-native-vision-camera-resizer": "5.2.2",
+    "react-native-vision-camera-worklets": "5.2.2",
     "react-native-web": "~0.21.0",
-    "react-native-webgpu": "^0.8.2",
-    "react-native-worklets": "0.10.1",
-    "typegpu": "^0.12.0"
+    "react-native-worklets": "0.10.1"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
-    "@webgpu/types": "^0.1.71",
-    "typescript": "~6.0.3",
-    "unplugin-typegpu": "^0.12.1"
+    "typescript": "~6.0.3"
   },
   "scripts": {
     "start": "expo start",

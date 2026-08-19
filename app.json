@@ -12,12 +12,14 @@
       "icon": "./assets/expo.icon",
       "bundleIdentifier": "com.benschac.snap-to-post-ai",
       "infoPlist": {
-        "NSCameraUsageDescription": "$(PRODUCT_NAME) needs access to your camera to capture photos."
+        "NSCameraUsageDescription": "$(PRODUCT_NAME) needs access to your camera to capture photos.",
+        "NSMicrophoneUsageDescription": "$(PRODUCT_NAME) needs access to your microphone to capture item descriptions."
       }
     },
     "android": {
       "permissions": [
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -48,14 +50,6 @@
           "ios": {
             "deploymentTarget": "17.0"
           }
-        }
-      ],
-      [
-        "@react-native-runtimes/core",
-        {
-          "packages": [
-            "@react-native-runtimes/state"
-          ]
         }
       ]
     ],
