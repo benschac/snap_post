@@ -1,56 +1,50 @@
-# Welcome to your Expo app 👋
+# Snap to Post
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Snap to Post is a pnpm/Turborepo workspace with an Expo mobile client and a dedicated Hono backend.
 
-## Get started
+## Workspace
 
-1. Install dependencies
-
-   ```bash
-   pnpm install
-   ```
-
-2. Start the app
-
-   ```bash
-   pnpm start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-pnpm reset-project
+```text
+apps/mobile       Expo and React Native application
+apps/api          Hono Node control plane
+packages/protocol Shared HTTP and WebSocket contracts
+outputs           Product and technical plans
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Install dependencies from the repository root:
 
-### Other setup steps
+```bash
+pnpm install
+```
 
-- To set up ESLint for linting, run `pnpm lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+Run both development processes:
 
-## Learn more
+```bash
+pnpm dev
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+Run one application when you do not need the whole workspace:
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+```bash
+pnpm --filter @snap/mobile dev
+pnpm --filter @snap/api dev
+```
 
-## Join the community
+The existing root shortcuts still work through Turbo: `pnpm ios`, `pnpm ios:dev-client`, `pnpm android`, and `pnpm web`.
 
-Join our community of developers creating universal apps.
+The API listens on `0.0.0.0:8787` by default so a physical phone can connect over the local network. Copy the package-local examples before development and replace the placeholder LAN address:
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+```bash
+cp apps/api/.env.example apps/api/.env
+cp apps/mobile/.env.example apps/mobile/.env
+```
+
+No server secret belongs in the mobile environment. Variables prefixed with `EXPO_PUBLIC_` are bundled into the application.
+
+## Validation
+
+```bash
+pnpm typecheck
+pnpm test
+pnpm --filter @snap/mobile exec expo install --check
+```

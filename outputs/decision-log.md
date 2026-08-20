@@ -2,6 +2,17 @@
 
 One dated entry per decision. Newest first. When a decision here conflicts with the brief, this log wins until the brief is updated.
 
+## 2026-08-20 — Backend monorepo scaffold
+
+### D15. Dedicated backend, shared repository
+The repository is now a pnpm/Turborepo workspace: the existing Expo app lives in `apps/mobile`, the independently runnable Hono service lives in `apps/api`, and runtime-neutral HTTP/WebSocket contracts live in `packages/protocol`. The backend remains a separate Node process and future deployment even though client and server share one Git repository.
+
+### D16. Use the maintained Hono Node WebSocket adapter
+`@hono/node-ws` is deprecated. The control plane uses `@hono/node-server` v2's built-in `upgradeWebSocket` with a directly declared `ws` runtime dependency. The first scaffold exposes `GET /health` and a versioned `control.ping` → `control.pong` WebSocket round trip. Authentication, durable jobs, database tables, and signed uploads remain later B0 work.
+
+### D17. Scaffold verification boundary
+Workspace typechecks and tests pass, including a real ephemeral Node HTTP/WebSocket integration test and all pre-existing mobile capture tests. Expo config and the iOS Metro export resolve from `apps/mobile`. A physical phone-to-Mac LAN round trip remains unverified. Expo's dependency check also reports pre-existing patch-version drift within SDK 57, and the existing `react-native-executorch` package blocks Expo's web export because its published web bundle requires a missing internal `lib/package.json`.
+
 ## 2026-08-18 — Slice 0 implementation checkpoint (physical gates blocked)
 
 ### D14. Buildable harness is not a passed physical-device gate
@@ -36,7 +47,7 @@ The Expo app already exists at the repo root (`app.json`, prebuilt `ios/`, `src/
 iPhone 17 Pro. This means iOS 26-class OS: Apple `SpeechAnalyzer` is available, so the first STT lane is **on-device Apple speech with no API key**. Cloud STT providers (Deepgram/ElevenLabs/OpenAI) are benchmarked later only if Apple quality or latency disappoints.
 
 ### D3. Backend: local-first Hono on Node (pnpm), not Vercel
-The control plane needs a persistent WebSocket; Vercel serverless is the wrong shape for it. For the PoC the backend is a single Hono process on Node — managed with pnpm like the rest of the repo, run with `tsx watch`, WebSockets via `@hono/node-ws` — **running on the Mac**, with the phone connecting over LAN IP. Zero deploys, hot reload, no cold starts — maximum iteration speed and the lowest possible latency. When it must leave the LAN, deploy the same process to Fly.io (single US-East region); that is a later step, not part of the first build.
+The control plane needs a persistent WebSocket; Vercel serverless is the wrong shape for it. For the PoC the backend is a single Hono process on Node — managed with pnpm like the rest of the repo, run with `tsx watch`, with WebSockets supplied by the maintained `@hono/node-server` v2 adapter plus `ws` — **running on the Mac**, with the phone connecting over LAN IP. Zero deploys, hot reload, no cold starts — maximum iteration speed and the lowest possible latency. When it must leave the LAN, deploy the same process to Fly.io (single US-East region); that is a later step, not part of the first build.
 
 ### D4. Datastore: Supabase (data already lives there)
 First-party items/images are in a Supabase Postgres. Path of least resistance:

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "android": {
+      "cache": false
+    },
+    "dev": {
+      "cache": false,
+      "env": ["EXPO_PUBLIC_API_URL", "HOST", "PORT"],
+      "persistent": true
+    },
+    "ios": {
+      "cache": false
+    },
+    "ios:dev-client": {
+      "cache": false
+    },
+    "lint": {},
+    "test": {
+      "dependsOn": ["^typecheck"]
+    },
+    "typecheck": {
+      "dependsOn": ["^typecheck"]
+    },
+    "web": {
+      "cache": false,
+      "persistent": true
+    }
+  }
+}

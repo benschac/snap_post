@@ -400,7 +400,7 @@ Build the Start, Stop, and Next Item controls, camera stability and quality scor
 
 #### Slice B0: Backend skeleton (parallel with Slices 0–1)
 
-Local Hono/Node gateway (pnpm, `tsx watch`, `@hono/node-ws`) on the Mac with the phone over LAN; typed WebSocket event payloads; sessions/items/images/claims/price tables on a dev Supabase copy (pg_dump restore, pgvector enabled); signed uploads to Supabase Storage; one device→server→device echo; provider spend/concurrency caps.
+Local Hono/Node gateway (pnpm, `tsx watch`, `@hono/node-server` v2 plus `ws`) on the Mac with the phone over LAN; typed WebSocket event payloads; sessions/items/images/claims/price tables on a dev Supabase copy (pg_dump restore, pgvector enabled); signed uploads to Supabase Storage; one device→server→device echo; provider spend/concurrency caps.
 
 #### Slice 2: Exact-identifier fast lane
 
