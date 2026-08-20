@@ -1,10 +1,9 @@
+import { createORPCClient } from '@orpc/client';
+import { RPCLink } from '@orpc/client/websocket';
 import {
-  ClientControlEventSchema,
+  type ControlContractClient,
   HealthResponseSchema,
-  type ClientControlEvent,
   type HealthResponse,
-  type ServerEvent,
-  ServerEventSchema,
 } from '@snap/protocol';
 
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -28,6 +27,13 @@ export function resolveControlSocketUrl(baseUrl = resolveBackendUrl()): string {
   const url = new URL('/v1/control', baseUrl);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   return url.toString();
+}
+
+export function createControlClient(
+  websocket: WebSocket,
+): ControlContractClient {
+  const link = new RPCLink({ websocket });
+  return createORPCClient(link);
 }
 
 export async function fetchBackendHealth(options?: {
@@ -55,12 +61,4 @@ export async function fetchBackendHealth(options?: {
   } finally {
     clearTimeout(timeout);
   }
-}
-
-export function serializeClientEvent(event: ClientControlEvent): string {
-  return JSON.stringify(ClientControlEventSchema.parse(event));
-}
-
-export function parseServerEvent(message: string): ServerEvent {
-  return ServerEventSchema.parse(JSON.parse(message));
 }

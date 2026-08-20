@@ -4,10 +4,12 @@ import type { AddressInfo } from 'node:net';
 import test from 'node:test';
 
 import {
+  type ControlContractClient,
   CONTROL_PROTOCOL_VERSION,
   HealthResponseSchema,
-  ServerControlEventSchema,
 } from '@snap/protocol';
+import { createORPCClient } from '@orpc/client';
+import { RPCLink } from '@orpc/client/websocket';
 import { WebSocket } from 'ws';
 
 import { createApiServer } from '../src/runtime.ts';
@@ -38,27 +40,29 @@ test('serves health and echoes a typed WebSocket control event', async (t) => {
   const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/control`);
   await once(socket, 'open');
 
-  socket.send(
-    JSON.stringify({
-      type: 'control.ping',
-      eventId: 'event-1',
-      sessionId: 'session-1',
-      revision: 0,
-      schemaVersion: CONTROL_PROTOCOL_VERSION,
-      clientTimestamp: '2026-08-20T12:00:00.000Z',
-      payload: { nonce: 'nonce-1' },
-    }),
+  const client: ControlContractClient = createORPCClient(
+    new RPCLink({ websocket: socket }),
   );
+  const events = await client.control.subscribe({ sessionId: 'session-1' });
+  const nextEvent = events.next();
+  const receipt = await client.control.publish({
+    type: 'control.ping',
+    eventId: 'event-1',
+    sessionId: 'session-1',
+    revision: 0,
+    schemaVersion: CONTROL_PROTOCOL_VERSION,
+    clientTimestamp: '2026-08-20T12:00:00.000Z',
+    payload: { nonce: 'nonce-1' },
+  });
+  const response = await nextEvent;
 
-  const [message] = await once(socket, 'message');
-  const response = ServerControlEventSchema.parse(
-    JSON.parse(message.toString()),
-  );
+  assert.equal(receipt.eventId, 'event-1');
+  assert.equal(response.done, false);
+  assert.equal(response.value.type, 'control.pong');
+  assert.equal(response.value.sessionId, 'session-1');
+  assert.equal(response.value.payload.nonce, 'nonce-1');
 
-  assert.equal(response.type, 'control.pong');
-  assert.equal(response.sessionId, 'session-1');
-  assert.equal(response.payload.nonce, 'nonce-1');
-
+  await events.return(undefined);
   socket.close();
   await once(socket, 'close');
 });

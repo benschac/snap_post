@@ -4,6 +4,9 @@ One dated entry per decision. Newest first. When a decision here conflicts with 
 
 ## 2026-08-20 — Backend monorepo scaffold
 
+### D21. oRPC owns typed control transport framing
+Use pinned stable oRPC 1.15 contract-first procedures over the existing Node `ws` connection for client event publication and server event subscriptions. The shared Zod event envelopes remain the runtime-validated domain contract and retain `event_id`, revision, schema version, and session/item identifiers; oRPC owns only the outer procedure, correlation, acknowledgement, and stream framing. Hono continues to own ordinary HTTP routes such as `/health`, Drizzle remains server-only, and selected image bytes still upload directly to Supabase Storage. Capture and Next Item transitions must remain local and never await an RPC acknowledgement. An isolated 500-call loopback comparison measured raw JSON/Zod p95 at 0.184 ms and oRPC/Zod p95 at 0.331 ms on 2026-08-20; this is local evidence only, and physical iPhone-over-LAN publish/stream latency plus reconnect/background recovery remain required gates. Do not adopt the oRPC v2 beta until it is intentionally evaluated after a stable release.
+
 ### D15. Dedicated backend, shared repository
 The repository is now a pnpm/Turborepo workspace: the existing Expo app lives in `apps/mobile`, the independently runnable Hono service lives in `apps/api`, and runtime-neutral HTTP/WebSocket contracts live in `packages/protocol`. The backend remains a separate Node process and future deployment even though client and server share one Git repository.
 

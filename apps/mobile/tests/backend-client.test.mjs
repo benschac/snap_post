@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  createControlClient,
   fetchBackendHealth,
-  parseServerEvent,
   resolveBackendUrl,
   resolveControlSocketUrl,
 } from '../src/features/backend/backend-client.ts';
@@ -30,21 +30,14 @@ test('validates the backend health response', async () => {
   assert.equal(health.status, 'ok');
 });
 
-test('accepts bounded server error events', () => {
-  const event = parseServerEvent(
-    JSON.stringify({
-      type: 'control.error',
-      eventId: 'server-event-1',
-      sessionId: 'session-1',
-      revision: 2,
-      schemaVersion: 1,
-      serverTimestamp: '2026-08-20T12:00:01.000Z',
-      payload: {
-        code: 'invalid_event',
-        message: 'Invalid event',
-      },
-    }),
-  );
+test('creates a typed oRPC client around the provided control socket', () => {
+  const client = createControlClient({
+    readyState: 0,
+    addEventListener() {},
+    removeEventListener() {},
+    send() {},
+  });
 
-  assert.equal(event.type, 'control.error');
+  assert.equal(typeof client.control.publish, 'function');
+  assert.equal(typeof client.control.subscribe, 'function');
 });

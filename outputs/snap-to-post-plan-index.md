@@ -1,7 +1,8 @@
 # Snap to Post: complete plan index
 
-Updated: 2026-08-18 (post plan-review; gating questions resolved in the [decision log](./decision-log.md))  
-Status: planning set is ready to begin implementation and measurement.
+Updated: 2026-08-20 (implementation checkpoint; gating questions remain governed by the [decision log](./decision-log.md))
+
+Status: implementation is underway. Slice B0's database/schema foundation is complete locally; runtime persistence, signed uploads, and physical end-to-end proof remain.
 
 ## What “the complete plan” means
 
@@ -400,7 +401,20 @@ Build the Start, Stop, and Next Item controls, camera stability and quality scor
 
 #### Slice B0: Backend skeleton (parallel with Slices 0–1)
 
-Local Hono/Node gateway (pnpm, `tsx watch`, `@hono/node-server` v2 plus `ws`) on the Mac with the phone over LAN; typed WebSocket event payloads; sessions/items/images/claims/price tables on a dev Supabase copy (pg_dump restore, pgvector enabled); signed uploads to Supabase Storage; one device→server→device echo; provider spend/concurrency caps.
+Local Hono/Node gateway (pnpm, `tsx watch`, `@hono/node-server` v2 plus `ws`) on the Mac with the phone over LAN; typed WebSocket event payloads; Drizzle ORM plus Postgres.js as the server-only typed query/transaction layer; prototype-owned sessions/item-intents/tracks/images/control-events/claims/price tables in an isolated `snap_to_post` schema on a local/dev Supabase copy (pg_dump restore when first-party retrieval data is needed, pgvector enabled); Supabase SQL migrations as the sole migration/deployment authority, including hand-written RLS/grants and Storage policy SQL; a private signed-upload path to Supabase Storage; one device→server→device echo; provider spend/concurrency caps. The established marketplace project is read-only reference data and never the B0 write target; do not use `drizzle-kit push` or a separate Drizzle migration ledger against shared/remote databases.
+
+Progress checkpoint — 2026-08-20:
+
+- [x] Create the local Hono/Node gateway, health route, and typed `control.ping` → `control.pong` WebSocket path.
+- [x] Define the typed client/server event payload contract in the shared protocol package.
+- [x] Add the server-only Postgres.js/Drizzle client and isolate the prototype tables in the `snap_to_post` PostgreSQL schema.
+- [x] Define sessions, item intents, tracks, images, control-event idempotency records, claims/evidence, and price observations in Drizzle with constraints, indexes, inferred types, and RLS declarations.
+- [x] Generate the reviewed base migration through Drizzle Kit and keep Supabase migrations as the sole deployment history; retain companion SQL for extensions, grants, default privileges, and the private Storage bucket.
+- [x] Verify the schema statically and exercise a transaction against the configured integration database when `DATABASE_URL` is available.
+- [ ] Persist validated domain events transactionally: record each event ID once, then materialize the corresponding session, intent, track, image, claim/evidence, or price state.
+- [ ] Add the narrowly scoped signed-upload endpoint and complete the selected-image upload receipt flow.
+- [ ] Add provider request ceilings and concurrency caps before external identification providers are enabled.
+- [ ] Prove one physical device → LAN server → database/upload → device round trip; the automated ping/pong test is not physical-device evidence.
 
 #### Slice 2: Exact-identifier fast lane
 
@@ -484,10 +498,13 @@ The companion learning guide covers:
 - evaluation/data roadmap;
 - ML learning curriculum.
 
-### Exists as of 2026-08-18
+### Exists as of 2026-08-20
 
 - the Expo application repository at this repo root (`app.json`, prebuilt `ios/`, `newArchEnabled: true`);
-- a decision log resolving all implementation-gating questions: device (iPhone 17 Pro), backend (local Hono/Node over LAN), datastore (dev Supabase copy + pgvector + Supabase Storage), credentials (Groq + Exa only), package pruning and deferrals.
+- a decision log resolving all implementation-gating questions: device (iPhone 17 Pro), backend (local Hono/Node over LAN), datastore (dev Supabase copy + pgvector + Supabase Storage), credentials (Groq + Exa only), package pruning and deferrals;
+- the local Hono/Node API scaffold with health and typed WebSocket ping/pong paths;
+- shared typed client/server event payload schemas;
+- the Postgres.js/Drizzle database client, complete prototype schema, generated Supabase migration, companion Supabase configuration migration, and schema/integration tests.
 
 ### Does not exist yet
 
@@ -496,7 +513,8 @@ The companion learning guide covers:
 - the 30–50-item labeled evaluation corpus;
 - a model/retrieval benchmark harness;
 - measured quality, latency, memory, network, or thermal results;
-- backend API schemas implemented in code;
+- runtime persistence handlers that apply validated domain events to the database;
+- the signed-upload API and completed Supabase Storage upload-receipt flow;
 - Groq/Exa credentials (self-serve, needed by Slices 2–3);
 - an audited mapping from the existing marketplace schema into learning labels;
 - production privacy, security, retention, or legal approvals;
@@ -509,6 +527,6 @@ Those are implementation and evidence artifacts, not missing planning prose.
 
 Planning should stop expanding until implementation produces new evidence.
 
-The next action is Slice 0 in the existing repo: run the sub-gate ladder (prune packages, add VisionCamera plugins and mic permission, build for the iPhone 17 Pro, climb the gates) per the brief and decision log. Slice B0 (local backend skeleton) can proceed in parallel. The 30–50-item evaluation manifest follows once the capture loop exists.
+The next B0 action is to connect the validated WebSocket domain-event contract to transactional Drizzle persistence. Start with `session.started`, `item.intent_started`, track attach/start, image selected/uploaded, and `item.closed`; insert each event ID once in `control_events` and materialize its associated row changes in the same transaction so retries are idempotent.
 
-After Slice 0, Slice 1 should produce the first thing that feels like the product: a zero-tap camera session that automatically captures useful, nonduplicate stills while Start, Stop, and the Next Item button remain responsive and every major span is measured.
+After that, add the narrowly scoped signed-upload endpoint and prove the first physical device → LAN server → database/upload → device round trip. Slice 1's zero-tap capture work can continue in parallel, but neither automated tests nor a Simulator-only run count as physical-device proof. The 30–50-item evaluation manifest follows once the capture loop exists.

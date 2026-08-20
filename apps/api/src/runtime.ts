@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
 
 import { app } from './app.ts';
+import { controlRpcHandler } from './orpc.ts';
 
 export type ApiServerOptions = {
   hostname?: string;
@@ -12,6 +13,13 @@ export type ApiServerOptions = {
 
 export function createApiServer(options: ApiServerOptions = {}): ServerType {
   const websocketServer = new WebSocketServer({ noServer: true });
+  websocketServer.on('connection', (socket, request) => {
+    const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
+
+    if (pathname === '/v1/control') {
+      void controlRpcHandler.upgrade(socket);
+    }
+  });
 
   return serve(
     {

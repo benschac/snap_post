@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@opentelemetry/api": "1.9.0",
+    "@orpc/contract": "1.15.0",
     "zod": "4.4.3"
   },
   "devDependencies": {

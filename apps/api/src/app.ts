@@ -1,11 +1,6 @@
 import { upgradeWebSocket } from '@hono/node-server';
-import {
-  CONTROL_PROTOCOL_VERSION,
-  HealthResponseSchema,
-} from '@snap/protocol';
+import { CONTROL_PROTOCOL_VERSION, HealthResponseSchema } from '@snap/protocol';
 import { Hono } from 'hono';
-
-import { createControlResponse } from './control.ts';
 
 export const app = new Hono();
 
@@ -21,22 +16,7 @@ app.get('/health', (context) =>
 
 app.get(
   '/v1/control',
-  upgradeWebSocket(() => ({
-    onMessage(event, socket) {
-      let value: unknown;
-
-      try {
-        value =
-          typeof event.data === 'string'
-            ? JSON.parse(event.data)
-            : undefined;
-      } catch {
-        value = undefined;
-      }
-
-      socket.send(JSON.stringify(createControlResponse(value)));
-    },
-  })),
+  upgradeWebSocket(() => ({})),
 );
 
 app.notFound((context) =>
