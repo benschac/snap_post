@@ -1197,7 +1197,10 @@ Evidence:
 
 - Hono/Node gateway running locally with `tsx watch`
 - typed WebSocket event schema implemented for the client/server events named in this brief (payloads, not just names)
-- Postgres tables for sessions, items, images, claims/evidence, and price observations on the dev Supabase copy
+- isolated local/dev Supabase target initialized; the currently connected marketplace project remains read-only reference data and is never the B0 write target
+- Drizzle ORM plus Postgres.js used immediately as the Hono service's typed query and transaction layer, with prototype tables isolated in a `snap_to_post` schema
+- Supabase SQL migrations remain the only migration/deployment authority: Drizzle may define the TypeScript table model and generate reviewed SQL into `supabase/migrations`, but `drizzle-kit push` and a separate Drizzle migration ledger are not used against shared or remote databases
+- migrations create sessions, item intents/tracks, images, control-event idempotency records, claims/evidence, and price observations; Drizzle owns RLS declarations while hand-written SQL owns pgvector enablement, grants/default privileges, Storage buckets/policies, and any database functions Drizzle does not model
 - signed-upload path to Supabase Storage
 - one device → server → device echo round-trip over LAN
 - per-session request ceiling and per-provider concurrency caps in orchestrator config (spend safety, not cost optimization: a runaway fan-out must fail closed)

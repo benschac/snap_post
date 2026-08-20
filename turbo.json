@@ -6,7 +6,7 @@
     },
     "dev": {
       "cache": false,
-      "env": ["EXPO_PUBLIC_API_URL", "HOST", "PORT"],
+      "env": ["DATABASE_URL", "EXPO_PUBLIC_API_URL", "HOST", "PORT"],
       "persistent": true
     },
     "ios": {

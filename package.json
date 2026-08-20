@@ -5,6 +5,11 @@
   "packageManager": "pnpm@11.22.0",
   "scripts": {
     "android": "turbo run android --filter=@snap/mobile",
+    "db:generate": "pnpm --filter @snap/api db:generate",
+    "db:reset": "supabase db reset",
+    "db:schema:sql": "pnpm --filter @snap/api db:schema:sql",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
     "dev": "turbo run dev",
     "ios": "turbo run ios --filter=@snap/mobile",
     "ios:dev-client": "turbo run ios:dev-client --filter=@snap/mobile",

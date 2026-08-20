@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "db:generate": "drizzle-kit generate",
+    "db:schema:sql": "drizzle-kit export --config drizzle.config.ts",
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "test": "tsx --test test/*.test.ts",
@@ -12,12 +14,15 @@
   "dependencies": {
     "@hono/node-server": "2.1.1",
     "@snap/protocol": "workspace:*",
+    "drizzle-orm": "0.45.2",
     "hono": "4.13.3",
+    "postgres": "3.4.9",
     "ws": "8.21.3"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/ws": "^8.18.1",
+    "drizzle-kit": "0.31.10",
     "tsx": "4.23.12",
     "typescript": "~6.0.3"
   },

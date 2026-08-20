@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1787248735041,
+      "tag": "20260820175855_initialize_snap_to_post",
+      "breakpoints": true
+    }
+  ]
+}
