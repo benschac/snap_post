@@ -30,16 +30,18 @@ function compactAttributes(attributes?: TraceAttributes) {
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
-export class SliceZeroTrace {
+export class SliceTrace {
   readonly sessionId: string;
   readonly startedAtIso: string;
+  readonly slice: number;
 
   private readonly startedAtMs = performance.now();
   private readonly events: TraceEvent[] = [];
   private readonly openSpans = new Map<string, OpenSpan>();
 
-  constructor(sessionId: string) {
+  constructor(sessionId: string, slice: number) {
     this.sessionId = sessionId;
+    this.slice = slice;
     this.startedAtIso = new Date().toISOString();
   }
 
@@ -77,13 +79,13 @@ export class SliceZeroTrace {
   export(metadata: TraceExportMetadata) {
     this.mark('trace.exported', { openSpanCount: this.openSpans.size });
 
-    const file = new File(Paths.document, `slice-zero-${this.sessionId}.json`);
+    const file = new File(Paths.document, `slice-${this.slice}-${this.sessionId}.json`);
     file.create({ overwrite: true });
     file.write(
       JSON.stringify(
         {
           schemaVersion: 1,
-          slice: 0,
+          slice: this.slice,
           sessionId: this.sessionId,
           startedAt: this.startedAtIso,
           exportedAt: new Date().toISOString(),
