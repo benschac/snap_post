@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "benchmark:control": "tsx scripts/benchmark-control-rpc.ts",
+    "benchmark:identity": "tsx scripts/benchmark-visual-identity.ts",
     "db:generate": "drizzle-kit generate",
     "db:schema:sql": "drizzle-kit export --config drizzle.config.ts",
     "dev": "tsx watch src/server.ts",

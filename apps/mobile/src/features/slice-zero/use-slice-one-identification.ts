@@ -44,7 +44,7 @@ export function useSliceOneIdentification({
     if (requestedItemsRef.current.has(requestKey)) return;
     requestedItemsRef.current.add(requestKey);
 
-    state$.identificationStatus.set(`Item ${item.itemIndex} · identifying with Groq…`);
+    state$.identificationStatus.set(`Item ${item.itemIndex} · identifying…`);
     trace.mark('identity.requested', {
       imageId: primaryCapture.id,
       imageCount: captures.length,
@@ -66,7 +66,7 @@ export function useSliceOneIdentification({
         onEvent: (event, elapsedMs) => {
           if (event.type !== 'accepted' || traceRef.current?.sessionId !== sessionId) return;
           state$.identificationStatus.set(
-            `Item ${item.itemIndex} · ${imageFiles.length} view${imageFiles.length === 1 ? '' : 's'} uploaded · Groq analyzing…`
+            `Item ${item.itemIndex} · ${imageFiles.length} view${imageFiles.length === 1 ? '' : 's'} uploaded · analyzing…`
           );
           trace.mark('identity.request_accepted', {
             imageId: primaryCapture.id,
