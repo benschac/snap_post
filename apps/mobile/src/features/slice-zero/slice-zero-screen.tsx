@@ -1,23 +1,20 @@
-import { Canvas, Circle, Line, RoundedRect, vec } from '@shopify/react-native-skia';
-import type { IdentifyResponse, ServerEvent } from '@snap/protocol';
+import { useObservable, useValue } from '@legendapp/state/react';
+import type { IdentifyResponse } from '@snap/protocol';
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import { Directory, File, Paths } from 'expo-file-system';
-import { useFocusEffect } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   LayoutChangeEvent,
   Platform,
-  Pressable,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import { NitroImage, type Image } from 'react-native-nitro-image';
+import type { Image } from 'react-native-nitro-image';
 import { Presets } from 'react-native-pulsar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -36,17 +33,11 @@ import Animated, {
 import {
   Camera,
   type CameraOrientation,
-  type CameraObjectOutput,
   CommonResolutions,
   type Frame,
   type ScannedObject,
-  type ScannedObjectType,
-  VisionCamera,
-  useCameraDevice,
-  useCameraPermission,
   useFrameOutput,
   useMicrophonePermission,
-  usePhotoOutput,
 } from 'react-native-vision-camera';
 import {
   type Barcode,
@@ -56,27 +47,14 @@ import {
 import { scheduleOnRN } from 'react-native-worklets';
 
 import SnapNative from '../../../modules/snap-native/src/SnapNativeModule';
-import type {
-  AudioStatsEvent,
-  NativeTelemetry,
-} from '../../../modules/snap-native/src/SnapNative.types';
+import type { AudioStatsEvent } from '../../../modules/snap-native/src/SnapNative.types';
 import {
-  createControlClient,
   identifyItemImages,
-  resolveControlSocketUrl,
 } from '../backend/backend-client';
 import {
-  ANALYSIS_TARGET_FPS_OPTIONS,
   analysisFrameId,
   shouldAnalyzeFrame,
-  type AnalysisTargetFps,
 } from '../slice-one/analysis-profile';
-import {
-  beginCameraSwitch,
-  markCameraSwitchConfigured,
-  shouldCompleteCameraSwitch,
-  type CameraSwitchState,
-} from '../slice-one/camera-switch-lifecycle';
 import {
   LABEL_AGNOSTIC_PROPOSAL_POLICY,
   evaluateInventoryCaptureProposal,
@@ -98,10 +76,7 @@ import {
   replaceItemCaptures,
   type CaptureItem,
 } from '../slice-one/item-session';
-import {
-  computeScanGuideLayout,
-  SCAN_GUIDE_HORIZONTAL_INSET,
-} from '../slice-one/scan-guide-layout';
+import { computeScanGuideLayout } from '../slice-one/scan-guide-layout';
 import {
   INITIAL_OBJECT_TRACKER_STATE,
   type DetectionCandidate,
@@ -116,7 +91,22 @@ import {
   type SalientObjectObservation,
 } from '../slice-one/salient-object-shadow';
 import { summarizeCaptureLifecycle } from '../slice-one/session-summary';
+import {
+  SliceOneControlsPanel,
+  SliceOneScanGuide,
+  SliceOneStatusPanel,
+} from './slice-one-view';
+import {
+  createInitialSliceOneViewState,
+  EMPTY_METRICS,
+  type Metrics,
+} from './slice-one-view-state';
 import { percentile, SliceTrace } from './trace';
+import {
+  SALIENT_OBJECT_TYPE,
+  useSliceOneCamera,
+} from './use-slice-one-camera';
+import { useSliceOneControlStream } from './use-slice-one-control-stream';
 
 // VisionCamera Worklets 5.2.2 can accept an async task without executing its
 // callback, retaining the Frame indefinitely. Keep quality analysis on the
@@ -127,9 +117,6 @@ const FRAME_TIMESTAMP_SECONDS_SCALE = Platform.OS === 'android' ? 1 / 1_000_000_
 const DETECTION_THRESHOLD = 0.5;
 const SOAK_TARGET_MS = 10 * 60 * 1_000;
 const BARCODE_FORMATS: TargetBarcodeFormat[] = ['ean-13', 'upc-a', 'qr-code', 'code-128'];
-const SALIENT_OBJECT_TYPES: ScannedObjectType[] = ['salient-object'];
-const PHOTO_PREVIEW_SIZE = { width: 320, height: 320 };
-const IDENTIFICATION_PHOTO_SIZE = CommonResolutions.HD_4_3;
 const IDENTIFICATION_IMAGE_LIMIT = 2;
 const QUALITY_FRAME_SIZE = 64;
 const SIGNATURE_GRID_SIZE = 8;
@@ -138,8 +125,6 @@ const OBJECT_DETECTION_MODEL = models.object_detection.ssdlite_320_mobilenet_v3_
   backend: 'coreml',
 });
 
-type SessionState = 'idle' | 'starting' | 'running' | 'stopping';
-type CameraPosition = 'back' | 'front';
 type CaptureGateOutcome =
   | 'busy'
   | 'capture'
@@ -201,54 +186,6 @@ type SalientObjectShadowCounters = {
   wouldCapture: number;
 };
 
-type Metrics = {
-  inputFrames: number;
-  previewFps: number;
-  analysisRequested: number;
-  analysisAccepted: number;
-  analysisRejected: number;
-  analysisFps: number;
-  droppedFrames: number;
-  detectionCount: number;
-  gateP50Ms: number;
-  gateP95Ms: number;
-  brightness: number;
-  clippedRatio: number;
-  motion: number;
-  qualityScore: number;
-  sharpness: number;
-  lastBarcode: string;
-  objectConfidence: number;
-  objectLabel: string;
-  barcodeScans: number;
-  resizeResult: string;
-  trackId: string;
-};
-
-const EMPTY_METRICS: Metrics = {
-  inputFrames: 0,
-  previewFps: 0,
-  analysisRequested: 0,
-  analysisAccepted: 0,
-  analysisRejected: 0,
-  analysisFps: 0,
-  droppedFrames: 0,
-  detectionCount: 0,
-  gateP50Ms: 0,
-  gateP95Ms: 0,
-  brightness: 0,
-  clippedRatio: 0,
-  motion: 0,
-  qualityScore: 0,
-  sharpness: 0,
-  lastBarcode: 'none',
-  objectConfidence: 0,
-  objectLabel: 'none',
-  barcodeScans: 0,
-  resizeResult: 'pending',
-  trackId: 'none',
-};
-
 function makeSessionId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -289,17 +226,6 @@ function emptySalientObjectShadowCounters(): SalientObjectShadowCounters {
   };
 }
 
-function formatDuration(milliseconds: number) {
-  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1_000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-}
-
-function formatBytes(bytes: number) {
-  return bytes > 0 ? `${(bytes / 1024 / 1024).toFixed(0)} MB` : 'n/a';
-}
-
 function formatError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -325,145 +251,45 @@ function formatIdentityCandidate(candidate: IdentifyResponse['candidate']) {
   return uniqueParts.length > 0 ? uniqueParts.join(' ') : candidate.category;
 }
 
-function ActionButton({
-  label,
-  tone = 'secondary',
-  disabled = false,
-  onPress,
-}: {
-  label: string;
-  tone?: 'primary' | 'danger' | 'secondary';
-  disabled?: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.actionButton,
-        tone === 'primary' && styles.actionButtonPrimary,
-        tone === 'danger' && styles.actionButtonDanger,
-        pressed && !disabled && styles.actionButtonPressed,
-        disabled && styles.actionButtonDisabled,
-      ]}>
-      <Text style={styles.actionButtonText}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function GatePill({ label, status }: { label: string; status: 'error' | 'pending' | 'ready' }) {
-  return (
-    <View
-      style={[
-        styles.gatePill,
-        status === 'ready' && styles.gatePillReady,
-        status === 'error' && styles.gatePillError,
-      ]}>
-      <View
-        style={[
-          styles.gateDot,
-          status === 'ready' && styles.gateDotReady,
-          status === 'error' && styles.gateDotError,
-        ]}
-      />
-      <Text style={styles.gatePillText}>{label}</Text>
-    </View>
-  );
-}
-
-function AnalysisProfileButton({
-  disabled,
-  fps,
-  selected,
-  onPress,
-}: {
-  disabled: boolean;
-  fps: AnalysisTargetFps;
-  selected: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityLabel={`${fps} analysis frames per second`}
-      accessibilityRole="button"
-      accessibilityState={{ disabled, selected }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.profileButton,
-        selected && styles.profileButtonSelected,
-        pressed && !disabled && styles.actionButtonPressed,
-        disabled && styles.actionButtonDisabled,
-      ]}>
-      <Text style={[styles.profileButtonText, selected && styles.profileButtonTextSelected]}>
-        {fps} fps
-      </Text>
-    </Pressable>
-  );
-}
-
 export function SliceOneScreen() {
   const insets = useSafeAreaInsets();
-  const [isFocused, setIsFocused] = useState(false);
-  const [cameraPosition, setCameraPosition] = useState<CameraPosition>('back');
-  const cameraPermission = useCameraPermission();
+  const viewState$ = useObservable(createInitialSliceOneViewState());
+  const sessionState = useValue(viewState$.sessionState);
+  const modelProbeRequested = useValue(viewState$.modelProbeRequested);
+  const analysisTargetFps = useValue(viewState$.analysisTargetFps);
+  const setSessionState = viewState$.sessionState.set;
+  const setSessionStartedAt = viewState$.sessionStartedAt.set;
+  const setElapsedMs = viewState$.elapsedMs.set;
+  const setMetrics = viewState$.metrics.set;
+  const setAudioStats = viewState$.audioStats.set;
+  const setTelemetry = viewState$.telemetry.set;
+  const setCaptureStatus = viewState$.captureStatus.set;
+  const setModelResult = viewState$.modelResult.set;
+  const setModelProbeRequested = viewState$.modelProbeRequested.set;
+  const setExportUri = viewState$.exportUri.set;
+  const setErrorMessage = viewState$.errorMessage.set;
+  const setCurrentItemIndex = viewState$.currentItemIndex.set;
+  const setQualityGateStatus = viewState$.qualityGateStatus.set;
+  const setIsCapturing = viewState$.isCapturing.set;
+  const setAnalysisTargetFps = viewState$.analysisTargetFps.set;
+  const setIdentificationStatus = viewState$.identificationStatus.set;
   const microphonePermission = useMicrophonePermission();
-  const backCameraDevice = useCameraDevice('back', { physicalDevices: ['wide-angle'] });
-  const frontCameraDevice = useCameraDevice('front');
-  const cameraDevice = cameraPosition === 'front' ? frontCameraDevice : backCameraDevice;
-  const photoOutput = usePhotoOutput({
-    containerFormat: 'jpeg',
-    qualityPrioritization: 'balanced',
-    targetResolution: IDENTIFICATION_PHOTO_SIZE,
-    previewImageTargetSize: PHOTO_PREVIEW_SIZE,
-  });
   const barcodeScanner = useBarcodeScanner({ barcodeFormats: BARCODE_FORMATS });
 
-  const [sessionState, setSessionState] = useState<SessionState>('idle');
-  const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null);
-  const [elapsedMs, setElapsedMs] = useState(0);
-  const [metrics, setMetrics] = useState<Metrics>(EMPTY_METRICS);
-  const [audioStats, setAudioStats] = useState<AudioStatsEvent | null>(null);
-  const [telemetry, setTelemetry] = useState<NativeTelemetry | null>(null);
   const [latestImage, setLatestImage] = useState<Image | null>(null);
-  const [captureStatus, setCaptureStatus] = useState('No photo captured');
-  const [modelResult, setModelResult] = useState('Model probe not started');
-  const [modelProbeRequested, setModelProbeRequested] = useState(false);
-  const [cameraConfigured, setCameraConfigured] = useState(false);
-  const [cameraPreviewStarted, setCameraPreviewStarted] = useState(false);
-  const [exportUri, setExportUri] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
   const [topPanelBottom, setTopPanelBottom] = useState(0);
   const [bottomPanelTop, setBottomPanelTop] = useState(0);
-  const [currentItemIndex, setCurrentItemIndex] = useState(1);
   const [selectedCaptures, setSelectedCaptures] = useState<RetainedCapture[]>([]);
-  const [qualityGateStatus, setQualityGateStatus] = useState('Waiting for a stable view');
-  const [isCapturing, setIsCapturing] = useState(false);
-  const [analysisTargetFps, setAnalysisTargetFps] = useState<AnalysisTargetFps>(5);
-  const [identificationStatus, setIdentificationStatus] = useState(
-    'Identity API waiting for a completed item'
-  );
 
   const traceRef = useRef<SliceTrace | null>(null);
   const audioStatsRef = useRef<AudioStatsEvent | null>(null);
-  const latestImageRef = useRef<Image | null>(null);
-  const metricsRef = useRef(EMPTY_METRICS);
   const droppedFramesRef = useRef(0);
-  const elapsedRef = useRef(0);
-  const sessionStartedAtRef = useRef<number | null>(null);
-  const sessionEndedAtRef = useRef<number | null>(null);
   const frameDurationsRef = useRef<number[]>([]);
   const frameGateEventsRef = useRef(0);
   const captureGateCountsRef = useRef(emptyCaptureGateCounts());
   const analysisClockRef = useRef({ atMs: 0, inputFrames: 0, accepted: 0 });
   const firstAnalysisFrameIdRef = useRef<number | null>(null);
-  const firstPreviewSeenRef = useRef(false);
-  const cameraPositionRef = useRef<CameraPosition>('back');
-  const cameraSwitchRef = useRef<CameraSwitchState<CameraPosition> | null>(null);
   const modelReadySeenRef = useRef(false);
   const detectorReadySeenRef = useRef(false);
   const captureInFlightRef = useRef(false);
@@ -487,9 +313,6 @@ export function SliceOneScreen() {
   const activeItemRef = useRef<SessionItem>(createCaptureItem<RetainedCapture>(1));
   const completedItemsRef = useRef<SessionItem[]>([]);
   const identificationRequestedItemsRef = useRef(new Set<string>());
-  const controlSocketRef = useRef<WebSocket | null>(null);
-  const controlSubscriptionRef = useRef<AsyncIterator<ServerEvent> | null>(null);
-  const controlSessionIdRef = useRef<string | null>(null);
   const objectTrackerRef = useRef<ObjectTrackerState>(INITIAL_OBJECT_TRACKER_STATE);
   const sessionDirectoryRef = useRef<Directory | null>(null);
   const autoCaptureRef = useRef<
@@ -509,8 +332,18 @@ export function SliceOneScreen() {
   const objectDetection = useObjectDetection({
     model: OBJECT_DETECTION_MODEL,
   });
+  const resetCameraTracking = useCallback(() => {
+    capturePolicyRef.current = INITIAL_CAPTURE_POLICY_STATE;
+    objectTrackerRef.current = INITIAL_OBJECT_TRACKER_STATE;
+    labelAgnosticCapturePolicyRef.current = INITIAL_CAPTURE_POLICY_STATE;
+    labelAgnosticTrackerRef.current = INITIAL_OBJECT_TRACKER_STATE;
+    salientObjectCapturePolicyRef.current = INITIAL_CAPTURE_POLICY_STATE;
+    salientObjectObservationRef.current = null;
+    salientObjectTrackerRef.current = INITIAL_OBJECT_TRACKER_STATE;
+    previousFrameSignature.value = [];
+  }, [previousFrameSignature]);
   const onSalientObjectsScanned = useCallback((objects: ScannedObject[]) => {
-    const salientObjects = objects.filter((object) => object.type === 'salient-object');
+    const salientObjects = objects.filter((object) => object.type === SALIENT_OBJECT_TYPE);
     salientObjectObservationRef.current = {
       boxes: salientObjects.map((object) => ({
         height: object.boundingBox.height,
@@ -524,242 +357,53 @@ export function SliceOneScreen() {
     counters.callbackCount += 1;
     counters.objectCount += salientObjects.length;
   }, []);
-  const salientObjectOutput = useMemo<CameraObjectOutput | null>(
-    () =>
-      Platform.OS === 'ios'
-        ? VisionCamera.createObjectOutput({ enabledObjectTypes: SALIENT_OBJECT_TYPES })
-        : null,
-    []
-  );
-  useEffect(() => {
-    if (!salientObjectOutput) return;
-    salientObjectOutput.setOnObjectsScannedCallback(onSalientObjectsScanned);
-    return () => salientObjectOutput.setOnObjectsScannedCallback(undefined);
-  }, [onSalientObjectsScanned, salientObjectOutput]);
+  const getCurrentItemIndex = useCallback(() => activeItemRef.current.itemIndex, []);
+  const {
+    cameraDevice,
+    cameraPermission,
+    cameraPosition,
+    flipCamera,
+    handleAnalysisFrame,
+    isActive: isCameraActive,
+    isSwitching: isCameraSwitching,
+    nextCameraAvailable,
+    nextCameraPosition,
+    onConfigured: onCameraConfigured,
+    onError: onCameraError,
+    onInterruptionEnded: onCameraInterruptionEnded,
+    onInterruptionStarted: onCameraInterruptionStarted,
+    onPreviewStarted: onCameraPreviewStarted,
+    photoOutput,
+    resetForSession: resetCameraForSession,
+    salientObjectOutput,
+  } = useSliceOneCamera({
+    captureInFlightRef,
+    getCurrentItemIndex,
+    onCameraTrackingReset: resetCameraTracking,
+    onSalientObjectsScanned,
+    state$: viewState$,
+    traceRef,
+  });
   const captureFeedbackStyle = useAnimatedStyle(() => ({
     opacity: captureFeedback.value,
     transform: [{ scale: 1 + captureFeedback.value * 0.035 }],
   }));
   const runObjectDetectionOnFrame = objectDetection.runOnFrame;
-
-  useFocusEffect(
-    useCallback(() => {
-      setIsFocused(true);
-      return () => setIsFocused(false);
-    }, [])
-  );
-
-  const closeControlStream = useCallback(() => {
-    const subscription = controlSubscriptionRef.current;
-    controlSubscriptionRef.current = null;
-    if (subscription?.return) void subscription.return(undefined);
-
-    const socket = controlSocketRef.current;
-    controlSocketRef.current = null;
-    controlSessionIdRef.current = null;
-    socket?.close();
-  }, []);
-
-  const connectControlStream = useCallback(
-    async (sessionId: string, trace: SliceTrace) => {
-      closeControlStream();
-      controlSessionIdRef.current = sessionId;
-      trace.mark('control.connecting');
-
-      try {
-        const socket = new WebSocket(resolveControlSocketUrl());
-        controlSocketRef.current = socket;
-        await new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(
-            () => reject(new Error('Control WebSocket connection timed out')),
-            5_000
-          );
-          socket.onopen = () => {
-            clearTimeout(timeout);
-            resolve();
-          };
-          socket.onerror = () => {
-            clearTimeout(timeout);
-            reject(new Error('Control WebSocket connection failed'));
-          };
-        });
-        if (controlSessionIdRef.current !== sessionId) {
-          socket.close();
-          return;
-        }
-
-        trace.mark('control.connected');
-        socket.onerror = () => trace.mark('control.error');
-        socket.onclose = (event) => {
-          trace.mark('control.closed', { code: event.code, reason: event.reason });
-        };
-
-        const client = createControlClient(socket);
-        const events = await client.control.subscribe({ sessionId });
-        controlSubscriptionRef.current = events;
-
-        for await (const event of events) {
-          if (controlSessionIdRef.current !== sessionId) break;
-
-          if (event.type === 'identity.candidate') {
-            const label = formatIdentityCandidate(event.payload);
-            setIdentificationStatus(
-              `${event.itemIntentId} · ${label} · ${(event.payload.confidence * 100).toFixed(0)}%`
-            );
-            trace.mark('identity.candidate_streamed', {
-              itemIntentId: event.itemIntentId,
-              category: event.payload.category,
-              brand: event.payload.brand,
-              productName: event.payload.productName,
-              confidence: event.payload.confidence,
-              revision: event.revision,
-            });
-            continue;
-          }
-
-          if (event.type === 'evidence.patch') {
-            const webCandidates = event.payload.claims.find(
-              (claim) => claim.path === 'web.candidates'
-            )?.value;
-            const candidateCount = Array.isArray(webCandidates) ? webCandidates.length : 0;
-            const firstCandidate = Array.isArray(webCandidates) ? webCandidates[0] : undefined;
-            const firstTitle =
-              firstCandidate && typeof firstCandidate === 'object'
-                ? Reflect.get(firstCandidate, 'title')
-                : undefined;
-            const firstUrl =
-              firstCandidate && typeof firstCandidate === 'object'
-                ? Reflect.get(firstCandidate, 'url')
-                : undefined;
-            setIdentificationStatus(
-              `${event.itemIntentId} · ${typeof firstTitle === 'string' ? firstTitle : `${candidateCount} web candidates`} · ${event.payload.provider?.latencyMs.toFixed(0) ?? '—'} ms`
-            );
-            trace.mark('evidence.patch_received', {
-              itemIntentId: event.itemIntentId,
-              candidateCount,
-              claimCount: event.payload.claims.length,
-              firstTitle: typeof firstTitle === 'string' ? firstTitle : undefined,
-              firstUrl: typeof firstUrl === 'string' ? firstUrl : undefined,
-              provider: event.payload.provider?.name,
-              providerLatencyMs: event.payload.provider?.latencyMs,
-              revision: event.revision,
-            });
-            continue;
-          }
-
-          if (event.type === 'task.failed') {
-            setIdentificationStatus(
-              `${event.itemIntentId} · evidence unavailable: ${event.payload.message}`
-            );
-            trace.mark('identity.background_task_failed', {
-              itemIntentId: event.itemIntentId,
-              taskId: event.payload.taskId,
-              code: event.payload.code,
-              message: event.payload.message,
-              retryable: event.payload.retryable,
-              revision: event.revision,
-            });
-          }
-        }
-      } catch (error) {
-        if (controlSessionIdRef.current !== sessionId) return;
-        trace.mark('control.connection_failed', { message: formatError(error) });
-        closeControlStream();
-      }
-    },
-    [closeControlStream]
-  );
+  const {
+    close: closeControlStream,
+    connect: connectControlStream,
+  } = useSliceOneControlStream(viewState$);
 
   const replaceLatestImage = useCallback((image: Image) => {
-    latestImageRef.current = image;
     setLatestImage(image);
   }, []);
 
-  const resetCameraTracking = useCallback(() => {
-    capturePolicyRef.current = INITIAL_CAPTURE_POLICY_STATE;
-    objectTrackerRef.current = INITIAL_OBJECT_TRACKER_STATE;
-    labelAgnosticCapturePolicyRef.current = INITIAL_CAPTURE_POLICY_STATE;
-    labelAgnosticTrackerRef.current = INITIAL_OBJECT_TRACKER_STATE;
-    salientObjectCapturePolicyRef.current = INITIAL_CAPTURE_POLICY_STATE;
-    salientObjectObservationRef.current = null;
-    salientObjectTrackerRef.current = INITIAL_OBJECT_TRACKER_STATE;
-    previousFrameSignature.value = [];
-  }, [previousFrameSignature]);
-
-  const completeCameraSwitch = useCallback(
-    (signal: 'analysis-frame' | 'preview-started', deviceId: string) => {
-      const pendingSwitch = cameraSwitchRef.current;
-      if (!pendingSwitch || pendingSwitch.targetDeviceId !== deviceId) return false;
-
-      cameraSwitchRef.current = null;
-      resetCameraTracking();
-      setCameraConfigured(true);
-      setCameraPreviewStarted(true);
-      setQualityGateStatus('Waiting for a stable view');
-      traceRef.current?.mark('camera.flip_completed', {
-        cameraPosition: pendingSwitch.targetPosition,
-        cameraDeviceId: pendingSwitch.targetDeviceId,
-        completionSignal: signal,
-        itemIndex: activeItemRef.current.itemIndex,
-        latencyMs: performance.now() - pendingSwitch.requestedAtMs,
-      });
-      return true;
-    },
-    [resetCameraTracking]
-  );
-
-  const flipCamera = useCallback(() => {
-    if (
-      sessionState === 'starting' ||
-      sessionState === 'stopping' ||
-      isCapturing ||
-      captureInFlightRef.current
-    ) {
-      return;
-    }
-    const nextPosition: CameraPosition = cameraPosition === 'back' ? 'front' : 'back';
-    const nextDevice = nextPosition === 'front' ? frontCameraDevice : backCameraDevice;
-    if (!nextDevice) return;
-
-    const isLiveSwitch = sessionState === 'running';
-    if (isLiveSwitch) {
-      traceRef.current?.mark('camera.flip_requested', {
-        from: cameraPosition,
-        to: nextPosition,
-        itemIndex: activeItemRef.current.itemIndex,
-        targetDeviceId: nextDevice.id,
-      });
-    }
-    cameraSwitchRef.current = isLiveSwitch
-      ? beginCameraSwitch(nextDevice.id, nextPosition, performance.now())
-      : null;
-    cameraPositionRef.current = nextPosition;
-    setCameraConfigured(false);
-    setCameraPreviewStarted(false);
-    resetCameraTracking();
-    if (sessionState === 'running') setQualityGateStatus('Switching camera');
-    setCameraPosition(nextPosition);
-  }, [
-    backCameraDevice,
-    cameraPosition,
-    frontCameraDevice,
-    isCapturing,
-    resetCameraTracking,
-    sessionState,
-  ]);
-
   const onAnalysisSample = useCallback((sample: AnalysisSample) => {
     const now = performance.now();
-    const pendingSwitch = cameraSwitchRef.current;
-    if (
-      shouldCompleteCameraSwitch(pendingSwitch, sample.frameProcessingStartedAtMs) &&
-      pendingSwitch
-    ) {
-      completeCameraSwitch('analysis-frame', pendingSwitch.targetDeviceId);
-    }
+    handleAnalysisFrame(sample.frameProcessingStartedAtMs);
     firstAnalysisFrameIdRef.current ??= sample.frameId;
     const inputFrames = Math.max(
-      metricsRef.current.inputFrames,
+      viewState$.metrics.inputFrames.peek(),
       sample.frameId - firstAnalysisFrameIdRef.current + 1
     );
     const detectionFrameSize = resolveObjectDetectionFrameSize(
@@ -832,14 +476,14 @@ export function SliceOneScreen() {
     frameGateEventsRef.current += 1;
 
     const nextMetrics: Metrics = {
-      ...metricsRef.current,
+      ...viewState$.metrics.peek(),
       inputFrames,
       previewFps,
       analysisRequested: sample.requested,
       analysisAccepted: sample.accepted,
       analysisRejected: sample.rejected,
       analysisFps,
-      droppedFrames: droppedFramesRef.current,
+      droppedFrames: viewState$.metrics.droppedFrames.peek(),
       detectionCount: sample.detections.length,
       gateP50Ms: percentile(frameDurationsRef.current, 0.5),
       gateP95Ms: percentile(frameDurationsRef.current, 0.95),
@@ -848,17 +492,17 @@ export function SliceOneScreen() {
       motion: sample.motion,
       qualityScore: sample.qualityScore,
       sharpness: sample.sharpness,
-      barcodeScans: metricsRef.current.barcodeScans + (sample.barcodeScanned ? 1 : 0),
+      barcodeScans:
+        viewState$.metrics.barcodeScans.peek() + (sample.barcodeScanned ? 1 : 0),
       lastBarcode: sample.barcodeValue
         ? `${sample.barcodeFormat ?? 'unknown'} ${sample.barcodeValue}`
-        : metricsRef.current.lastBarcode,
+        : viewState$.metrics.lastBarcode.peek(),
       objectConfidence: captureTrack?.score ?? 0,
       objectLabel: captureTrack?.label ?? 'none',
       resizeResult:
         sample.resizedWidth > 0 ? `${sample.resizedWidth}×${sample.resizedHeight}` : 'unavailable',
       trackId: captureTrack?.id ?? 'none',
     };
-    metricsRef.current = nextMetrics;
     setMetrics(nextMetrics);
 
     const qualitySample: FrameQualitySample = {
@@ -883,7 +527,7 @@ export function SliceOneScreen() {
       labelAgnosticCapturePolicyRef.current,
       labelAgnosticQualitySample,
       labelAgnosticSelectedCapturesRef.current,
-      cameraSwitchRef.current !== null
+      isCameraSwitching()
     );
     labelAgnosticCapturePolicyRef.current = labelAgnosticResult.state;
     const labelAgnosticCaptureOutcome: CaptureGateOutcome =
@@ -913,7 +557,7 @@ export function SliceOneScreen() {
       salientObjectCapturePolicyRef.current,
       salientObjectQualitySample,
       salientObjectSelectedCapturesRef.current,
-      cameraSwitchRef.current !== null
+      isCameraSwitching()
     );
     salientObjectCapturePolicyRef.current = salientObjectResult.state;
     const salientObjectCaptureOutcome: CaptureGateOutcome =
@@ -976,7 +620,7 @@ export function SliceOneScreen() {
       capturePolicyRef.current,
       qualitySample,
       selectedCapturesRef.current,
-      captureInFlightRef.current || cameraSwitchRef.current !== null || stopRequestedRef.current
+      captureInFlightRef.current || isCameraSwitching() || stopRequestedRef.current
     );
     capturePolicyRef.current = result.state;
     const gateOutcome: CaptureGateOutcome =
@@ -987,7 +631,7 @@ export function SliceOneScreen() {
 
     traceRef.current?.mark('vision.frame_gate', {
       frameId: sample.frameId,
-      cameraPosition: cameraPositionRef.current,
+      cameraPosition: viewState$.cameraPosition.peek(),
       inputFrames,
       analysisRequested: sample.requested,
       analysisAccepted: sample.accepted,
@@ -1098,7 +742,7 @@ export function SliceOneScreen() {
         reason: 'capture-without-visible-track',
       });
     }
-  }, [completeCameraSwitch, objectDetection.isReady]);
+  }, [handleAnalysisFrame, isCameraSwitching, objectDetection.isReady]);
 
   const onAnalysisError = useCallback((message: string) => {
     setErrorMessage(`Frame processor: ${message}`);
@@ -1235,10 +879,9 @@ export function SliceOneScreen() {
     if (droppedFrames !== 1 && droppedFrames % 10 !== 0) return;
 
     const nextMetrics = {
-      ...metricsRef.current,
+      ...viewState$.metrics.peek(),
       droppedFrames,
     };
-    metricsRef.current = nextMetrics;
     setMetrics(nextMetrics);
     traceRef.current?.mark('vision.frame_dropped', { reason, droppedFrames });
   }, []);
@@ -1262,13 +905,10 @@ export function SliceOneScreen() {
     () => [{ fps: CAMERA_FPS }, { resolutionBias: frameOutput }],
     [frameOutput]
   );
-  const isCameraActive =
-    sessionState === 'running' && isFocused && cameraPermission.hasPermission;
 
   useEffect(() => {
     return () => {
       closeControlStream();
-      latestImageRef.current = null;
       selectedCapturesRef.current = [];
       void SnapNative?.stopPcmCapture();
     };
@@ -1301,17 +941,18 @@ export function SliceOneScreen() {
   }, []);
 
   useEffect(() => {
-    if (sessionState !== 'running' || sessionStartedAt === null) return;
+    if (sessionState !== 'running') return;
+    const sessionStartedAt = viewState$.sessionStartedAt.peek();
+    if (sessionStartedAt === null) return;
 
     const update = () => {
       const nextElapsed = performance.now() - sessionStartedAt;
-      elapsedRef.current = nextElapsed;
       setElapsedMs(nextElapsed);
     };
     update();
     const timer = setInterval(update, 1_000);
     return () => clearInterval(timer);
-  }, [sessionStartedAt, sessionState]);
+  }, [sessionState, viewState$]);
 
   useEffect(() => {
     if (sessionState !== 'running' || !SnapNative) return;
@@ -1366,16 +1007,14 @@ export function SliceOneScreen() {
 
   const resetSessionMetrics = useCallback(() => {
     const reset = { ...EMPTY_METRICS };
-    metricsRef.current = reset;
     droppedFramesRef.current = 0;
     setMetrics(reset);
     setAudioStats(null);
     audioStatsRef.current = null;
     setTelemetry(null);
     setElapsedMs(0);
-    elapsedRef.current = 0;
-    sessionStartedAtRef.current = null;
-    sessionEndedAtRef.current = null;
+    viewState$.sessionStartedAt.set(null);
+    viewState$.sessionEndedAt.set(null);
     frameDurationsRef.current = [];
     frameGateEventsRef.current = 0;
     captureGateCountsRef.current = emptyCaptureGateCounts();
@@ -1397,15 +1036,19 @@ export function SliceOneScreen() {
     salientObjectSelectedCapturesRef.current = [];
     salientObjectTrackerRef.current = INITIAL_OBJECT_TRACKER_STATE;
     captureInFlightRef.current = false;
-    cameraSwitchRef.current = null;
     stopRequestedRef.current = false;
     setIsCapturing(false);
-    firstPreviewSeenRef.current = false;
-    setCameraPreviewStarted(false);
+    resetCameraForSession();
     setExportUri(null);
     identificationRequestedItemsRef.current.clear();
     setIdentificationStatus('Identity API waiting for a completed item');
-  }, [analysisAccepted, analysisRejected, analysisRequested, previousFrameSignature]);
+  }, [
+    analysisAccepted,
+    analysisRejected,
+    analysisRequested,
+    previousFrameSignature,
+    resetCameraForSession,
+  ]);
 
   const resetCurrentItem = useCallback((itemIndex: number) => {
     const item = createCaptureItem<RetainedCapture>(itemIndex);
@@ -1583,7 +1226,7 @@ export function SliceOneScreen() {
           LABEL_AGNOSTIC_PROPOSAL_POLICY.minimumCenterOverlapRatio,
         salientObjectShadowMode: false,
         salientObjectFallbackEnabled: true,
-        salientObjectType: SALIENT_OBJECT_TYPES[0],
+        salientObjectType: SALIENT_OBJECT_TYPE,
         salientObjectOutputAttached: salientObjectOutput !== null,
         salientObjectOutputWidth: salientObjectOutput?.currentResolution?.width ?? null,
         salientObjectOutputHeight: salientObjectOutput?.currentResolution?.height ?? null,
@@ -1598,7 +1241,6 @@ export function SliceOneScreen() {
       trace.mark('item.started', { itemIndex: 1 });
 
       const startedAt = performance.now();
-      sessionStartedAtRef.current = startedAt;
       setSessionStartedAt(startedAt);
       setSessionState('running');
       void connectControlStream(sessionId, trace);
@@ -1646,10 +1288,12 @@ export function SliceOneScreen() {
     const trace = traceRef.current;
     if (!trace) return null;
 
-    const durationMs = sessionStartedAtRef.current !== null
-      ? (sessionEndedAtRef.current ?? performance.now()) - sessionStartedAtRef.current
-      : elapsedRef.current;
-    const currentTelemetry = SnapNative?.getTelemetry() ?? telemetry;
+    const currentSessionStartedAt = viewState$.sessionStartedAt.peek();
+    const durationMs = currentSessionStartedAt !== null
+      ? (viewState$.sessionEndedAt.peek() ?? performance.now()) - currentSessionStartedAt
+      : viewState$.elapsedMs.peek();
+    const currentMetrics = viewState$.metrics.peek();
+    const currentTelemetry = SnapNative?.getTelemetry() ?? viewState$.telemetry.peek();
     const captureSummary = summarizeCaptureLifecycle(
       completedItemsRef.current.map((item) => item.captures.length),
       activeItemRef.current.captures.length,
@@ -1670,15 +1314,15 @@ export function SliceOneScreen() {
         frameGateEvents: frameGateEventsRef.current,
         measuredAnalysisFps:
           durationMs > 0 ? frameGateEventsRef.current / (durationMs / 1_000) : 0,
-        inputFrames: metricsRef.current.inputFrames,
-        analysisRequested: metricsRef.current.analysisRequested,
-        analysisAccepted: metricsRef.current.analysisAccepted,
-        analysisRejected: metricsRef.current.analysisRejected,
+        inputFrames: currentMetrics.inputFrames,
+        analysisRequested: currentMetrics.analysisRequested,
+        analysisAccepted: currentMetrics.analysisAccepted,
+        analysisRejected: currentMetrics.analysisRejected,
         droppedFrames: droppedFramesRef.current,
-        barcodeScans: metricsRef.current.barcodeScans,
-        resizeResult: metricsRef.current.resizeResult,
-        gateP50Ms: metricsRef.current.gateP50Ms,
-        gateP95Ms: metricsRef.current.gateP95Ms,
+        barcodeScans: currentMetrics.barcodeScans,
+        resizeResult: currentMetrics.resizeResult,
+        gateP50Ms: currentMetrics.gateP50Ms,
+        gateP95Ms: currentMetrics.gateP95Ms,
         captureGateCaptures: captureGateCountsRef.current.capture,
         captureGateBusy: captureGateCountsRef.current.busy,
         captureGateCooldown: captureGateCountsRef.current.cooldown,
@@ -1711,7 +1355,7 @@ export function SliceOneScreen() {
         salientObjectOutputAttached: salientObjectOutput !== null,
         salientObjectOutputWidth: salientObjectOutput?.currentResolution?.width ?? null,
         salientObjectOutputHeight: salientObjectOutput?.currentResolution?.height ?? null,
-        cameraPosition: cameraPositionRef.current,
+        cameraPosition: viewState$.cameraPosition.peek(),
         cameraDeviceId: cameraDevice?.id ?? null,
         cameraDeviceName: cameraDevice?.name ?? null,
         completedItems: captureSummary.completedItems,
@@ -1727,8 +1371,8 @@ export function SliceOneScreen() {
         detectorError: objectDetection.error ? formatError(objectDetection.error) : null,
         detectorThreshold: DETECTION_THRESHOLD,
         labelAgnosticShadowMode: true,
-        lastTrackId: metricsRef.current.trackId,
-        lastObjectLabel: metricsRef.current.objectLabel,
+        lastTrackId: currentMetrics.trackId,
+        lastObjectLabel: currentMetrics.objectLabel,
         modelReady: classification.isReady,
         modelError: classification.error ? formatError(classification.error) : null,
       },
@@ -1743,7 +1387,6 @@ export function SliceOneScreen() {
     objectDetection.error,
     objectDetection.isReady,
     salientObjectOutput,
-    telemetry,
   ]);
 
   const shareTrace = useCallback(async () => {
@@ -1799,10 +1442,11 @@ export function SliceOneScreen() {
   const stopSession = useCallback(async () => {
     if (sessionState !== 'running' || stopRequestedRef.current) return;
     stopRequestedRef.current = true;
-    sessionEndedAtRef.current = performance.now();
-    if (sessionStartedAtRef.current !== null) {
-      elapsedRef.current = sessionEndedAtRef.current - sessionStartedAtRef.current;
-      setElapsedMs(elapsedRef.current);
+    const endedAt = performance.now();
+    viewState$.sessionEndedAt.set(endedAt);
+    const startedAt = viewState$.sessionStartedAt.peek();
+    if (startedAt !== null) {
+      setElapsedMs(endedAt - startedAt);
     }
     traceRef.current?.mark('session.stop_pressed');
     SnapNative?.mark('session.stop_pressed');
@@ -1831,7 +1475,7 @@ export function SliceOneScreen() {
       if (
         sessionState !== 'running' ||
         captureInFlightRef.current ||
-        cameraSwitchRef.current !== null
+        isCameraSwitching()
       ) {
         return;
       }
@@ -1849,7 +1493,7 @@ export function SliceOneScreen() {
       let previewSavePromise: Promise<void> | undefined;
       traceRef.current?.mark('capture.auto_requested', {
         imageId,
-        cameraPosition: cameraPositionRef.current,
+        cameraPosition: viewState$.cameraPosition.peek(),
         itemIndex: item.itemIndex,
         qualityScore: sample.qualityScore,
         replacing: replaceCaptureId ?? null,
@@ -1970,7 +1614,7 @@ export function SliceOneScreen() {
         }
         traceRef.current?.mark('capture.auto_saved', {
           imageId,
-          cameraPosition: cameraPositionRef.current,
+          cameraPosition: viewState$.cameraPosition.peek(),
           itemIndex: item.itemIndex,
           latencyMs: performance.now() - requestAt,
           qualityScore: sample.qualityScore,
@@ -1998,7 +1642,7 @@ export function SliceOneScreen() {
         setIsCapturing(false);
       }
     },
-    [captureFeedback, photoOutput, sessionState]
+    [captureFeedback, isCameraSwitching, photoOutput, sessionState]
   );
   autoCaptureRef.current = captureAutoCandidate;
 
@@ -2161,17 +1805,6 @@ export function SliceOneScreen() {
     previewWidth: previewSize.width,
     topPanelBottom,
   });
-  const overlayColor =
-    sessionState !== 'running' ? '#A8B1C4' : metrics.qualityScore >= 0.56 ? '#6DF5A8' : '#F6C85F';
-  const soakProgress = Math.min(1, elapsedMs / SOAK_TARGET_MS);
-  const nextCameraPosition: CameraPosition = cameraPosition === 'back' ? 'front' : 'back';
-  const nextCameraAvailable =
-    nextCameraPosition === 'front' ? frontCameraDevice !== undefined : backCameraDevice !== undefined;
-  const cameraFlipDisabled =
-    !nextCameraAvailable ||
-    isCapturing ||
-    sessionState === 'starting' ||
-    sessionState === 'stopping';
 
   return (
     <View style={styles.container} onLayout={onPreviewLayout}>
@@ -2184,52 +1817,11 @@ export function SliceOneScreen() {
           constraints={cameraConstraints}
           isActive={isCameraActive}
           enableNativeTapToFocusGesture
-          onConfigured={() => {
-            cameraSwitchRef.current = markCameraSwitchConfigured(
-              cameraSwitchRef.current,
-              cameraDevice.id,
-              performance.now()
-            );
-            setCameraConfigured(true);
-            if (sessionState === 'running') {
-              traceRef.current?.mark('camera.configured', {
-                cameraPosition: cameraPositionRef.current,
-                cameraDeviceId: cameraDevice.id,
-              });
-            }
-          }}
-          onPreviewStarted={() => {
-            const completedSwitch = completeCameraSwitch('preview-started', cameraDevice.id);
-            setCameraPreviewStarted(true);
-            if (sessionState === 'running') {
-              traceRef.current?.mark('camera.preview_started', {
-                cameraPosition: cameraPositionRef.current,
-                cameraDeviceId: cameraDevice.id,
-                afterFlip: completedSwitch,
-              });
-            }
-            if (!firstPreviewSeenRef.current) {
-              firstPreviewSeenRef.current = true;
-              traceRef.current?.mark('camera.first_preview_frame', {
-                cameraPosition: cameraPositionRef.current,
-                cameraDeviceId: cameraDevice.id,
-              });
-              SnapNative?.mark('camera.first_preview_frame');
-            }
-          }}
-          onError={(error) => {
-            setErrorMessage(`Camera: ${error.message}`);
-            if (sessionState === 'running') {
-              traceRef.current?.mark('camera.error', {
-                message: error.message,
-                cameraPosition: cameraPositionRef.current,
-              });
-            }
-          }}
-          onInterruptionStarted={(reason) => {
-            traceRef.current?.mark('camera.interruption_started', { reason });
-          }}
-          onInterruptionEnded={() => traceRef.current?.mark('camera.interruption_ended')}
+          onConfigured={onCameraConfigured}
+          onPreviewStarted={onCameraPreviewStarted}
+          onError={onCameraError}
+          onInterruptionStarted={onCameraInterruptionStarted}
+          onInterruptionEnded={onCameraInterruptionEnded}
         />
       ) : (
         <View style={styles.permissionBackdrop}>
@@ -2240,245 +1832,50 @@ export function SliceOneScreen() {
         </View>
       )}
 
-      <View pointerEvents="none" style={styles.scanGuideLayer}>
-        <Canvas style={StyleSheet.absoluteFill}>
-          <RoundedRect
-            x={SCAN_GUIDE_HORIZONTAL_INSET}
-            y={scanGuide.top}
-            width={scanGuide.width}
-            height={scanGuide.height}
-            r={26}
-            color={overlayColor}
-            style="stroke"
-            strokeWidth={3}
-          />
-          <Circle
-            cx={previewSize.width / 2}
-            cy={scanGuide.top + scanGuide.height / 2}
-            r={4}
-            color={overlayColor}
-          />
-          <Line
-            p1={vec(previewSize.width / 2 - 22, scanGuide.top + scanGuide.height / 2)}
-            p2={vec(previewSize.width / 2 + 22, scanGuide.top + scanGuide.height / 2)}
-            color={overlayColor}
-            strokeWidth={1}
-          />
-          <Line
-            p1={vec(previewSize.width / 2, scanGuide.top + scanGuide.height / 2 - 22)}
-            p2={vec(previewSize.width / 2, scanGuide.top + scanGuide.height / 2 + 22)}
-            color={overlayColor}
-            strokeWidth={1}
-          />
-        </Canvas>
-      </View>
+      <SliceOneScanGuide
+        previewHeight={previewSize.height}
+        previewWidth={previewSize.width}
+        scanGuide={scanGuide}
+        state$={viewState$}
+      />
       <Animated.View
         pointerEvents="none"
         style={[styles.captureFeedback, captureFeedbackStyle]}
       />
 
-      <View style={styles.topPanel} onLayout={onTopPanelLayout}>
-        <View style={styles.headingRow}>
-          <View>
-            <Text style={styles.eyebrow}>SLICE 1 · ZERO-TAP CAPTURE</Text>
-            <Text style={styles.heading}>
-              {sessionState === 'running' ? `Item ${currentItemIndex} · ${qualityGateStatus}` : 'Ready to scan'}
-            </Text>
-          </View>
-          {selectedCaptures[0]?.previewImage ? (
-            <NitroImage image={selectedCaptures[0].previewImage} style={styles.thumbnail} />
-          ) : latestImage ? (
-            <NitroImage image={latestImage} style={styles.thumbnail} />
-          ) : null}
-        </View>
-
-        <View style={styles.gateRow}>
-          <GatePill
-            label="Camera"
-            status={cameraConfigured && cameraPreviewStarted ? 'ready' : 'pending'}
-          />
-          <GatePill
-            label="Worklet"
-            status={metrics.analysisAccepted > 0 ? 'ready' : 'pending'}
-          />
-          <GatePill
-            label="RGB sample"
-            status={
-              metrics.resizeResult === `${QUALITY_FRAME_SIZE}×${QUALITY_FRAME_SIZE}`
-                ? 'ready'
-                : 'pending'
-            }
-          />
-          <GatePill
-            label="Quality"
-            status={metrics.qualityScore >= 0.56 ? 'ready' : 'pending'}
-          />
-          <GatePill
-            label="Barcode"
-            status={metrics.barcodeScans > 0 ? 'ready' : 'pending'}
-          />
-          <GatePill
-            label="Detector"
-            status={
-              objectDetection.error ? 'error' : objectDetection.isReady ? 'ready' : 'pending'
-            }
-          />
-          <GatePill label="PCM" status={audioStats ? 'ready' : 'pending'} />
-        </View>
-
-        <View style={styles.metricsGrid}>
-          <View style={styles.metricCell}>
-            <Text style={styles.metricValue}>{(metrics.qualityScore * 100).toFixed(0)}%</Text>
-            <Text style={styles.metricLabel}>quality</Text>
-          </View>
-          <View style={styles.metricCell}>
-            <Text style={styles.metricValue}>{metrics.sharpness.toFixed(1)}</Text>
-            <Text style={styles.metricLabel}>sharpness</Text>
-          </View>
-          <View style={styles.metricCell}>
-            <Text style={styles.metricValue}>{metrics.motion.toFixed(1)}</Text>
-            <Text style={styles.metricLabel}>motion</Text>
-          </View>
-          <View style={styles.metricCell}>
-            <Text style={styles.metricValue}>{metrics.droppedFrames}</Text>
-            <Text style={styles.metricLabel}>dropped</Text>
-          </View>
-          <View style={styles.metricCell}>
-            <Text style={styles.metricValue}>{metrics.detectionCount}</Text>
-            <Text style={styles.metricLabel}>objects</Text>
-          </View>
-        </View>
-      </View>
-
-      <View
-        style={[styles.bottomPanel, { bottom: Math.max(10, insets.bottom + 8) }]}
+      <SliceOneStatusPanel
+        detectorError={Boolean(objectDetection.error)}
+        detectorReady={objectDetection.isReady}
+        latestImage={latestImage}
+        onLayout={onTopPanelLayout}
+        primaryPreviewImage={selectedCaptures[0]?.previewImage}
+        qualityFrameSize={QUALITY_FRAME_SIZE}
+        state$={viewState$}
+      />
+      <SliceOneControlsPanel
+        bottomInset={insets.bottom}
+        classificationDownloadProgress={classification.downloadProgress}
+        classificationError={Boolean(classification.error)}
+        classificationReady={classification.isReady}
+        completedItems={completedItemsRef.current.length}
+        detectorDownloadProgress={objectDetection.downloadProgress}
+        detectorError={Boolean(objectDetection.error)}
+        detectorReady={objectDetection.isReady}
+        nextCameraAvailable={nextCameraAvailable}
+        nextCameraPosition={nextCameraPosition}
+        onAnalysisTargetFpsChange={setAnalysisTargetFps}
+        onDevProbe={runDevProbe}
+        onFlipCamera={flipCamera}
         onLayout={onBottomPanelLayout}
-      >
-        <View style={styles.soakHeader}>
-          <View>
-            <Text style={styles.soakTime}>
-              {formatDuration(elapsedMs)} / {formatDuration(SOAK_TARGET_MS)}
-            </Text>
-            <Text style={styles.soakLabel}>
-              {elapsedMs >= SOAK_TARGET_MS ? 'Soak target met' : 'Physical-device soak'}
-            </Text>
-          </View>
-          <Text style={styles.telemetryText}>
-            {telemetry?.thermalState ?? 'thermal n/a'} ·{' '}
-            {formatBytes(telemetry?.residentMemoryBytes ?? 0)}
-          </Text>
-        </View>
-        <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${soakProgress * 100}%` }]} />
-        </View>
-
-        <Text style={styles.detailText} numberOfLines={1}>
-          Brightness {metrics.brightness.toFixed(0)} · clipped {(metrics.clippedRatio * 100).toFixed(0)}%
-          {' '}· gate p95 {metrics.gateP95Ms.toFixed(1)} ms
-        </Text>
-        <Text style={styles.detailText} numberOfLines={1}>
-          Selected {selectedCaptures.length}/3 · completed items {completedItemsRef.current.length} ·{' '}
-          analysis {metrics.analysisFps.toFixed(1)}/{analysisTargetFps} fps
-        </Text>
-        <Text style={styles.detailText} numberOfLines={1}>
-          Object {metrics.objectLabel} {(metrics.objectConfidence * 100).toFixed(0)}% ·{' '}
-          {metrics.trackId}
-        </Text>
-        <Text style={styles.detailText} numberOfLines={2}>
-          {modelResult}
-        </Text>
-        <Text style={styles.detailText} numberOfLines={2}>
-          {identificationStatus}
-        </Text>
-        <Text style={styles.detailText} numberOfLines={1}>
-          {captureStatus} · PCM chunks {audioStats?.chunkIndex ?? 0}
-        </Text>
-        {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
-        {exportUri ? (
-          <Text selectable style={styles.exportText} numberOfLines={2}>
-            Trace: {exportUri}
-          </Text>
-        ) : null}
-
-        <View style={styles.profileRow}>
-          <Text style={styles.profileLabel}>ANALYSIS PROFILE</Text>
-          {ANALYSIS_TARGET_FPS_OPTIONS.map((fps) => (
-            <AnalysisProfileButton
-              key={fps}
-              disabled={sessionState !== 'idle'}
-              fps={fps}
-              selected={analysisTargetFps === fps}
-              onPress={() => setAnalysisTargetFps(fps)}
-            />
-          ))}
-        </View>
-
-        <View style={styles.cameraControlRow}>
-          <View>
-            <Text style={styles.cameraControlLabel}>CAMERA</Text>
-            <Text style={styles.cameraControlValue}>{cameraPosition.toUpperCase()}</Text>
-          </View>
-          <Pressable
-            accessibilityLabel={`Use ${nextCameraPosition} camera`}
-            accessibilityRole="button"
-            accessibilityState={{ disabled: cameraFlipDisabled }}
-            disabled={cameraFlipDisabled}
-            onPress={flipCamera}
-            style={({ pressed }) => [
-              styles.cameraFlipButton,
-              pressed && !cameraFlipDisabled && styles.actionButtonPressed,
-              cameraFlipDisabled && styles.actionButtonDisabled,
-            ]}>
-            <Text style={styles.cameraFlipButtonText}>
-              Use {nextCameraPosition} camera
-            </Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.controls}>
-          {sessionState === 'idle' ? (
-            <ActionButton label="Start" tone="primary" onPress={() => void startSession()} />
-          ) : (
-            <ActionButton
-              label={sessionState === 'stopping' ? 'Stopping…' : 'Stop'}
-              tone="danger"
-              disabled={sessionState !== 'running'}
-              onPress={() => void stopSession()}
-            />
-          )}
-          <ActionButton
-            label="Next Item"
-            disabled={sessionState !== 'running'}
-            onPress={nextItem}
-          />
-          <ActionButton
-            label="Dev infer"
-            disabled={sessionState !== 'running' || isCapturing}
-            onPress={runDevProbe}
-          />
-          <ActionButton
-            label="Share trace"
-            disabled={!traceRef.current}
-            onPress={() => void shareTrace()}
-          />
-        </View>
-
-        {!objectDetection.isReady && !objectDetection.error ? (
-          <View style={styles.modelLoading}>
-            <ActivityIndicator color="#C9D5EA" size="small" />
-            <Text style={styles.modelLoadingText}>
-              Downloading object detector {(objectDetection.downloadProgress * 100).toFixed(0)}%
-            </Text>
-          </View>
-        ) : modelProbeRequested && !classification.isReady && !classification.error ? (
-          <View style={styles.modelLoading}>
-            <ActivityIndicator color="#C9D5EA" size="small" />
-            <Text style={styles.modelLoadingText}>
-              Downloading library model {(classification.downloadProgress * 100).toFixed(0)}%
-            </Text>
-          </View>
-        ) : null}
-      </View>
+        onNextItem={nextItem}
+        onShareTrace={() => void shareTrace()}
+        onStart={() => void startSession()}
+        onStop={() => void stopSession()}
+        selectedCaptures={selectedCaptures.length}
+        soakTargetMs={SOAK_TARGET_MS}
+        state$={viewState$}
+        traceAvailable={traceRef.current !== null}
+      />
     </View>
   );
 }
@@ -2519,278 +1916,5 @@ const styles = StyleSheet.create({
     borderWidth: 5,
     borderColor: 'rgba(255, 255, 255, 0.95)',
     backgroundColor: 'rgba(109, 245, 168, 0.12)',
-  },
-  scanGuideLayer: {
-    ...StyleSheet.absoluteFill,
-    zIndex: 1,
-  },
-  topPanel: {
-    position: 'absolute',
-    top: 14,
-    left: 14,
-    right: 14,
-    padding: 14,
-    borderRadius: 22,
-    backgroundColor: 'rgba(8, 12, 19, 0.82)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255, 255, 255, 0.18)',
-    zIndex: 2,
-  },
-  headingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  eyebrow: {
-    color: '#8FA2BF',
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 1.2,
-  },
-  heading: {
-    color: '#F7FAFF',
-    fontSize: 18,
-    fontWeight: '700',
-    marginTop: 3,
-  },
-  thumbnail: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.35)',
-  },
-  gateRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 12,
-  },
-  gatePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  gatePillReady: {
-    backgroundColor: 'rgba(52, 211, 153, 0.16)',
-  },
-  gatePillError: {
-    backgroundColor: 'rgba(248, 113, 113, 0.18)',
-  },
-  gateDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#718096',
-  },
-  gateDotReady: {
-    backgroundColor: '#6DF5A8',
-  },
-  gateDotError: {
-    backgroundColor: '#FB7185',
-  },
-  gatePillText: {
-    color: '#E5ECF7',
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  metricsGrid: {
-    flexDirection: 'row',
-    marginTop: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: 'rgba(255, 255, 255, 0.14)',
-    paddingTop: 10,
-  },
-  metricCell: {
-    flex: 1,
-  },
-  metricValue: {
-    color: '#F7FAFF',
-    fontSize: 16,
-    fontVariant: ['tabular-nums'],
-    fontWeight: '700',
-  },
-  metricLabel: {
-    color: '#8FA2BF',
-    fontSize: 9,
-    marginTop: 1,
-  },
-  bottomPanel: {
-    position: 'absolute',
-    left: 14,
-    right: 14,
-    bottom: 10,
-    padding: 14,
-    borderRadius: 22,
-    backgroundColor: 'rgba(8, 12, 19, 0.9)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255, 255, 255, 0.18)',
-    zIndex: 2,
-  },
-  soakHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  soakTime: {
-    color: '#F7FAFF',
-    fontSize: 18,
-    fontVariant: ['tabular-nums'],
-    fontWeight: '700',
-  },
-  soakLabel: {
-    color: '#8FA2BF',
-    fontSize: 10,
-    marginTop: 1,
-  },
-  telemetryText: {
-    color: '#B7C5DA',
-    fontSize: 10,
-    textTransform: 'capitalize',
-  },
-  progressTrack: {
-    height: 4,
-    borderRadius: 2,
-    marginVertical: 10,
-    overflow: 'hidden',
-    backgroundColor: 'rgba(255, 255, 255, 0.12)',
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 2,
-    backgroundColor: '#6DF5A8',
-  },
-  detailText: {
-    color: '#B7C5DA',
-    fontSize: 10,
-    lineHeight: 15,
-  },
-  errorText: {
-    color: '#FDA4AF',
-    fontSize: 10,
-    lineHeight: 15,
-    marginTop: 4,
-  },
-  exportText: {
-    color: '#93C5FD',
-    fontSize: 9,
-    lineHeight: 13,
-    marginTop: 4,
-  },
-  controls: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
-  },
-  profileRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 10,
-  },
-  profileLabel: {
-    flex: 1,
-    color: '#8FA2BF',
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-  },
-  profileButton: {
-    minWidth: 48,
-    minHeight: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255, 255, 255, 0.18)',
-    backgroundColor: 'rgba(255, 255, 255, 0.07)',
-  },
-  profileButtonSelected: {
-    borderColor: '#6DF5A8',
-    backgroundColor: 'rgba(52, 211, 153, 0.18)',
-  },
-  profileButtonText: {
-    color: '#AAB6C9',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  profileButtonTextSelected: {
-    color: '#D9FFEA',
-  },
-  cameraControlRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    marginTop: 10,
-  },
-  cameraControlLabel: {
-    color: '#8FA2BF',
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-  },
-  cameraControlValue: {
-    color: '#F7FAFF',
-    fontSize: 12,
-    fontWeight: '700',
-    marginTop: 1,
-  },
-  cameraFlipButton: {
-    minHeight: 34,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    backgroundColor: '#243047',
-  },
-  cameraFlipButtonText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  actionButton: {
-    flex: 1,
-    minHeight: 42,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 14,
-    paddingHorizontal: 8,
-    backgroundColor: '#243047',
-  },
-  actionButtonPrimary: {
-    backgroundColor: '#0F9F67',
-  },
-  actionButtonDanger: {
-    backgroundColor: '#B73A4A',
-  },
-  actionButtonPressed: {
-    opacity: 0.74,
-  },
-  actionButtonDisabled: {
-    opacity: 0.38,
-  },
-  actionButtonText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  modelLoading: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7,
-    marginTop: 9,
-  },
-  modelLoadingText: {
-    color: '#C9D5EA',
-    fontSize: 10,
   },
 });
