@@ -17,12 +17,6 @@ import {
 import type { Image } from 'react-native-nitro-image';
 import { Presets } from 'react-native-pulsar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import {
-  isAvailable as isExecutorchAvailable,
-  models,
-  useClassification,
-  useObjectDetection,
-} from 'react-native-executorch';
 import Animated, {
   ReduceMotion,
   useAnimatedStyle,
@@ -107,6 +101,7 @@ import {
   useSliceOneCamera,
 } from './use-slice-one-camera';
 import { useSliceOneControlStream } from './use-slice-one-control-stream';
+import { useSliceOneExecuTorch } from './use-slice-one-executorch';
 
 // VisionCamera Worklets 5.2.2 can accept an async task without executing its
 // callback, retaining the Frame indefinitely. Keep quality analysis on the
@@ -114,16 +109,11 @@ import { useSliceOneControlStream } from './use-slice-one-control-stream';
 const AUDIO_STATS_UI_STRIDE = 10;
 const CAMERA_FPS = 30;
 const FRAME_TIMESTAMP_SECONDS_SCALE = Platform.OS === 'android' ? 1 / 1_000_000_000 : 1;
-const DETECTION_THRESHOLD = 0.5;
 const SOAK_TARGET_MS = 10 * 60 * 1_000;
 const BARCODE_FORMATS: TargetBarcodeFormat[] = ['ean-13', 'upc-a', 'qr-code', 'code-128'];
 const IDENTIFICATION_IMAGE_LIMIT = 2;
 const QUALITY_FRAME_SIZE = 64;
 const SIGNATURE_GRID_SIZE = 8;
-const EXECUTORCH_MODEL = models.classification.efficientnet_v2_s();
-const OBJECT_DETECTION_MODEL = models.object_detection.ssdlite_320_mobilenet_v3_large({
-  backend: 'coreml',
-});
 
 type CaptureGateOutcome =
   | 'busy'
@@ -290,8 +280,6 @@ export function SliceOneScreen() {
   const captureGateCountsRef = useRef(emptyCaptureGateCounts());
   const analysisClockRef = useRef({ atMs: 0, inputFrames: 0, accepted: 0 });
   const firstAnalysisFrameIdRef = useRef<number | null>(null);
-  const modelReadySeenRef = useRef(false);
-  const detectorReadySeenRef = useRef(false);
   const captureInFlightRef = useRef(false);
   const activeCapturePromiseRef = useRef<Promise<void> | null>(null);
   const stopRequestedRef = useRef(false);
@@ -325,12 +313,23 @@ export function SliceOneScreen() {
   const previousFrameSignature = useSharedValue<number[]>([]);
   const captureFeedback = useSharedValue(0);
 
-  const classification = useClassification({
-    model: EXECUTORCH_MODEL,
-    preventLoad: !modelProbeRequested,
-  });
-  const objectDetection = useObjectDetection({
-    model: OBJECT_DETECTION_MODEL,
+  const {
+    classificationDownloadProgress,
+    classificationError,
+    classificationReady,
+    detectorDownloadProgress,
+    detectorError,
+    detectorModelName,
+    detectorReady,
+    detectorThreshold,
+    detectObjects,
+    executorchAvailable,
+    runClassification,
+  } = useSliceOneExecuTorch({
+    modelProbeRequested,
+    setErrorMessage,
+    setModelResult,
+    traceRef,
   });
   const resetCameraTracking = useCallback(() => {
     capturePolicyRef.current = INITIAL_CAPTURE_POLICY_STATE;
@@ -388,7 +387,6 @@ export function SliceOneScreen() {
     opacity: captureFeedback.value,
     transform: [{ scale: 1 + captureFeedback.value * 0.035 }],
   }));
-  const runObjectDetectionOnFrame = objectDetection.runOnFrame;
   const {
     close: closeControlStream,
     connect: connectControlStream,
@@ -732,7 +730,7 @@ export function SliceOneScreen() {
         busy: 'Saving selected photo',
         cooldown: 'Move to another angle',
         duplicate: 'View is too similar',
-        'no-object': objectDetection.isReady ? 'Center one object' : 'Preparing object detector',
+        'no-object': detectorReady ? 'Center one object' : 'Preparing object detector',
         quality: 'Hold steady in even light',
         stabilizing: 'Stable — keep holding',
       } as const;
@@ -742,7 +740,7 @@ export function SliceOneScreen() {
         reason: 'capture-without-visible-track',
       });
     }
-  }, [handleAnalysisFrame, isCameraSwitching, objectDetection.isReady]);
+  }, [detectorReady, handleAnalysisFrame, isCameraSwitching]);
 
   const onAnalysisError = useCallback((message: string) => {
     setErrorMessage(`Frame processor: ${message}`);
@@ -776,15 +774,7 @@ export function SliceOneScreen() {
       let barcodes: Barcode[] = [];
       let detections: DetectionCandidate[] = [];
       try {
-        if (runObjectDetectionOnFrame) {
-          detections = runObjectDetectionOnFrame(frame, false, {
-            detectionThreshold: DETECTION_THRESHOLD,
-          }).map((detection) => ({
-            bbox: detection.bbox,
-            label: String(detection.label).toLowerCase(),
-            score: detection.score,
-          }));
-        }
+        detections = detectObjects(frame);
         if (
           frame.pixelFormat !== 'rgb-bgra-8-bit' ||
           frame.isPlanar ||
@@ -866,10 +856,10 @@ export function SliceOneScreen() {
       analysisRequested,
       analysisTargetFps,
       barcodeScanner,
+      detectObjects,
       onAnalysisError,
       onAnalysisSample,
       previousFrameSignature,
-      runObjectDetectionOnFrame,
     ]
   );
 
@@ -970,40 +960,6 @@ export function SliceOneScreen() {
     const timer = setInterval(poll, 5_000);
     return () => clearInterval(timer);
   }, [sessionState]);
-
-  useEffect(() => {
-    if (classification.isReady && !modelReadySeenRef.current) {
-      modelReadySeenRef.current = true;
-      setModelResult('EfficientNet ready — capture to run inference');
-      traceRef.current?.mark('executorch.model_ready', {
-        model: EXECUTORCH_MODEL.modelName,
-      });
-      SnapNative?.mark('executorch.model_ready', EXECUTORCH_MODEL.modelName);
-    }
-  }, [classification.isReady]);
-
-  useEffect(() => {
-    if (!classification.error) return;
-    const message = formatError(classification.error);
-    setModelResult(`Fallback armed: ${message}`);
-    traceRef.current?.mark('executorch.model_failed', { message });
-  }, [classification.error]);
-
-  useEffect(() => {
-    if (!objectDetection.isReady || detectorReadySeenRef.current) return;
-    detectorReadySeenRef.current = true;
-    traceRef.current?.mark('object_detection.model_ready', {
-      model: OBJECT_DETECTION_MODEL.modelName,
-    });
-    SnapNative?.mark('object_detection.model_ready', OBJECT_DETECTION_MODEL.modelName);
-  }, [objectDetection.isReady]);
-
-  useEffect(() => {
-    if (!objectDetection.error) return;
-    const message = formatError(objectDetection.error);
-    setErrorMessage(`Object detector: ${message}`);
-    traceRef.current?.mark('object_detection.model_failed', { message });
-  }, [objectDetection.error]);
 
   const resetSessionMetrics = useCallback(() => {
     const reset = { ...EMPTY_METRICS };
@@ -1212,9 +1168,9 @@ export function SliceOneScreen() {
         cameraPosition,
         cameraDeviceId: cameraDevice?.id ?? null,
         cameraDeviceName: cameraDevice?.name ?? null,
-        detectorModel: OBJECT_DETECTION_MODEL.modelName,
-        detectorReady: objectDetection.isReady,
-        detectorThreshold: DETECTION_THRESHOLD,
+        detectorModel: detectorModelName,
+        detectorReady,
+        detectorThreshold,
         labelAgnosticShadowMode: true,
         labelAgnosticCenterRegion: '0.2,0.2,0.8,0.8',
         labelAgnosticEdgeInsetRatio: LABEL_AGNOSTIC_PROPOSAL_POLICY.edgeInsetRatio,
@@ -1277,7 +1233,9 @@ export function SliceOneScreen() {
     cameraPermission,
     connectControlStream,
     microphonePermission,
-    objectDetection.isReady,
+    detectorModelName,
+    detectorReady,
+    detectorThreshold,
     resetCurrentItem,
     resetSessionMetrics,
     salientObjectOutput,
@@ -1305,7 +1263,7 @@ export function SliceOneScreen() {
         osName: Device.osName ?? 'unknown',
         osVersion: Device.osVersion ?? 'unknown',
         appVersion: Constants.expoConfig?.version ?? 'unknown',
-        executorchAvailable: isExecutorchAvailable,
+        executorchAvailable,
       },
       summary: {
         durationMs,
@@ -1366,15 +1324,15 @@ export function SliceOneScreen() {
         audioChunks: audioStatsRef.current?.chunkIndex ?? 0,
         thermalState: currentTelemetry?.thermalState ?? 'unknown',
         residentMemoryBytes: currentTelemetry?.residentMemoryBytes ?? 0,
-        detectorModel: OBJECT_DETECTION_MODEL.modelName,
-        detectorReady: objectDetection.isReady,
-        detectorError: objectDetection.error ? formatError(objectDetection.error) : null,
-        detectorThreshold: DETECTION_THRESHOLD,
+        detectorModel: detectorModelName,
+        detectorReady,
+        detectorError,
+        detectorThreshold,
         labelAgnosticShadowMode: true,
         lastTrackId: currentMetrics.trackId,
         lastObjectLabel: currentMetrics.objectLabel,
-        modelReady: classification.isReady,
-        modelError: classification.error ? formatError(classification.error) : null,
+        modelReady: classificationReady,
+        modelError: classificationError,
       },
     });
     setExportUri(uri);
@@ -1382,10 +1340,13 @@ export function SliceOneScreen() {
   }, [
     analysisTargetFps,
     cameraDevice,
-    classification.error,
-    classification.isReady,
-    objectDetection.error,
-    objectDetection.isReady,
+    classificationError,
+    classificationReady,
+    detectorError,
+    detectorModelName,
+    detectorReady,
+    detectorThreshold,
+    executorchAvailable,
     salientObjectOutput,
   ]);
 
@@ -1683,8 +1644,6 @@ export function SliceOneScreen() {
     const trace = traceRef.current;
     trace?.mark('capture.requested', { imageId });
     let nativePhotoSpan = SnapNative?.beginSpan('capture.photo', imageId);
-    let inferenceSpan: string | undefined;
-    let nativeInferenceSpan: string | undefined;
     setCaptureStatus('Capturing in memory…');
     setErrorMessage(null);
 
@@ -1718,45 +1677,25 @@ export function SliceOneScreen() {
         nativePhotoSpan = undefined;
       }
 
-      if (!classification.isReady) {
+      if (!classificationReady) {
         setModelResult(
-          classification.error
-            ? `Heuristic fallback: ${formatError(classification.error)}`
-            : `Model downloading ${(classification.downloadProgress * 100).toFixed(0)}%`
+          classificationError
+            ? `Heuristic fallback: ${classificationError}`
+            : `Model downloading ${(classificationDownloadProgress * 100).toFixed(0)}%`
         );
         return;
       }
 
       temporaryPath = await photo.saveToTemporaryFileAsync();
-      inferenceSpan = trace?.beginSpan('executorch.inference', { imageId });
-      nativeInferenceSpan = SnapNative?.beginSpan('executorch.inference', imageId);
-      const result = await classification.forward(
-        temporaryPath.startsWith('file://') ? temporaryPath : `file://${temporaryPath}`
+      await runClassification(
+        temporaryPath.startsWith('file://') ? temporaryPath : `file://${temporaryPath}`,
+        imageId
       );
-      const topResults = Object.entries(result as Record<string, number>)
-        .sort((left, right) => right[1] - left[1])
-        .slice(0, 3);
-      const resultLabel = topResults
-        .map(([label, confidence]) => `${label} ${(confidence * 100).toFixed(1)}%`)
-        .join(' · ');
-      setModelResult(resultLabel || 'Inference returned no labels');
-      if (inferenceSpan) {
-        trace?.endSpan(inferenceSpan, { topLabel: topResults[0]?.[0] });
-        inferenceSpan = undefined;
-      }
-      if (nativeInferenceSpan) {
-        SnapNative?.endSpan(nativeInferenceSpan, 'executorch.inference', topResults[0]?.[0]);
-        nativeInferenceSpan = undefined;
-      }
     } catch (error) {
       const message = formatError(error);
       setErrorMessage(`Photo/model probe: ${message}`);
       trace?.mark('capture_or_inference.error', { imageId, message });
       if (nativePhotoSpan) SnapNative?.endSpan(nativePhotoSpan, 'capture.photo', message);
-      if (inferenceSpan) trace?.endSpan(inferenceSpan, { error: message });
-      if (nativeInferenceSpan) {
-        SnapNative?.endSpan(nativeInferenceSpan, 'executorch.inference', message);
-      }
     } finally {
       photo?.dispose();
       if (temporaryPath) {
@@ -1769,9 +1708,12 @@ export function SliceOneScreen() {
       setIsCapturing(false);
     }
   }, [
-    classification,
+    classificationDownloadProgress,
+    classificationError,
+    classificationReady,
     photoOutput,
     replaceLatestImage,
+    runClassification,
     sessionState,
   ]);
 
@@ -1844,8 +1786,8 @@ export function SliceOneScreen() {
       />
 
       <SliceOneStatusPanel
-        detectorError={Boolean(objectDetection.error)}
-        detectorReady={objectDetection.isReady}
+        detectorError={Boolean(detectorError)}
+        detectorReady={detectorReady}
         latestImage={latestImage}
         onLayout={onTopPanelLayout}
         primaryPreviewImage={selectedCaptures[0]?.previewImage}
@@ -1854,13 +1796,13 @@ export function SliceOneScreen() {
       />
       <SliceOneControlsPanel
         bottomInset={insets.bottom}
-        classificationDownloadProgress={classification.downloadProgress}
-        classificationError={Boolean(classification.error)}
-        classificationReady={classification.isReady}
+        classificationDownloadProgress={classificationDownloadProgress}
+        classificationError={Boolean(classificationError)}
+        classificationReady={classificationReady}
         completedItems={completedItemsRef.current.length}
-        detectorDownloadProgress={objectDetection.downloadProgress}
-        detectorError={Boolean(objectDetection.error)}
-        detectorReady={objectDetection.isReady}
+        detectorDownloadProgress={detectorDownloadProgress}
+        detectorError={Boolean(detectorError)}
+        detectorReady={detectorReady}
         nextCameraAvailable={nextCameraAvailable}
         nextCameraPosition={nextCameraPosition}
         onAnalysisTargetFpsChange={setAnalysisTargetFps}
