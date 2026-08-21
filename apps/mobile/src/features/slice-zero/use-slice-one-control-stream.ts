@@ -1,35 +1,15 @@
 import type { Observable } from '@legendapp/state';
-import type { IdentifyResponse, ServerEvent } from '@snap/protocol';
+import type { ServerEvent } from '@snap/protocol';
 import { useCallback, useRef } from 'react';
 
 import {
   createControlClient,
   resolveControlSocketUrl,
 } from '../backend/backend-client';
+import { formatError } from './format-error';
+import { formatIdentityCandidate } from './identity-format';
 import type { SliceOneViewState } from './slice-one-view-state';
 import type { SliceTrace } from './trace';
-
-function formatError(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function formatIdentityCandidate(candidate: IdentifyResponse['candidate']) {
-  const parts = [
-    candidate.brand,
-    candidate.productName,
-    candidate.model,
-    candidate.variant,
-  ];
-  const uniqueParts = parts.filter(
-    (part, index): part is string =>
-      Boolean(part) &&
-      parts.findIndex(
-        (candidatePart) =>
-          candidatePart?.toLocaleLowerCase() === part?.toLocaleLowerCase()
-      ) === index
-  );
-  return uniqueParts.length > 0 ? uniqueParts.join(' ') : candidate.category;
-}
 
 export function useSliceOneControlStream(state$: Observable<SliceOneViewState>) {
   const socketRef = useRef<WebSocket | null>(null);
