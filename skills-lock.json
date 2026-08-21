@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "react-native-vision-camera": {
+      "source": "margelo/react-native-skills",
+      "sourceType": "github",
+      "skillPath": "skills/react-native-vision-camera/SKILL.md",
+      "computedHash": "7708d6cff8e1d29eac23d17676324c0dc1c70c741467f8e41098c8de3c948dc6"
+    }
+  }
+}

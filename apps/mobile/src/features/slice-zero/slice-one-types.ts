@@ -4,6 +4,7 @@ import type { SelectedCapture } from '../slice-one/capture-policy';
 import type { CaptureItem } from '../slice-one/item-session';
 
 export type RetainedCapture = SelectedCapture & {
+  captureRequestedAtMs: number;
   fileUri: string;
   previewImage?: Image;
   previewUri?: string;

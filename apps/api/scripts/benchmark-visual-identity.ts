@@ -8,8 +8,8 @@ import {
 
 const DEFAULT_MODELS = [
   'google/gemini-3.7-flash',
-  'alibaba/qwen3.7-flash',
-  'alibaba/qwen3.7-plus',
+  'google/gemini-3.5-flash-lite',
+  'google/gemini-3.1-flash-lite',
 ];
 
 const imagePaths = process.argv.slice(2);
@@ -36,8 +36,22 @@ if (imagePaths.length === 0 || imagePaths.length > MAX_INPUT_IMAGES) {
 
   for (const model of models) {
     try {
-      const result = await identifyVisualItem({ images }, { model });
-      console.log(JSON.stringify({ status: 'ok', ...result }));
+      const startedAt = performance.now();
+      let observedPartialLatencyMs: number | undefined;
+      const result = await identifyVisualItem(
+        { images },
+        {
+          model,
+          onPartialInference: () => {
+            observedPartialLatencyMs ??= performance.now() - startedAt;
+          },
+        },
+      );
+      console.log(JSON.stringify({
+        status: 'ok',
+        observedPartialLatencyMs,
+        ...result,
+      }));
     } catch (error) {
       console.log(JSON.stringify({
         status: 'error',

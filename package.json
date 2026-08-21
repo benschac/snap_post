@@ -11,10 +11,11 @@
     "db:start": "supabase start",
     "db:stop": "supabase stop",
     "dev": "turbo run dev",
+    "dev:all": "turbo run dev --filter=@snap/api --filter=@snap/mobile --ui=tui",
     "ios": "turbo run ios --filter=@snap/mobile",
     "ios:dev-client": "turbo run ios:dev-client --filter=@snap/mobile",
     "lint": "turbo run lint",
-    "start": "turbo run dev",
+    "start": "turbo run start --filter=@snap/mobile --ui=tui",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "web": "turbo run web --filter=@snap/mobile"

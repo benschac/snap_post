@@ -11,6 +11,7 @@ import {
 
 type ResponseOptions = {
   eventId?: string;
+  revision?: number;
   serverTimestamp?: string;
 };
 
@@ -45,9 +46,10 @@ export function createControlResponse(
           ? sessionId
           : 'unknown',
       revision:
-        typeof revision === 'number' && Number.isInteger(revision) && revision >= 0
+        options.revision ??
+        (typeof revision === 'number' && Number.isInteger(revision) && revision >= 0
           ? revision
-          : 0,
+          : 0),
       schemaVersion: CONTROL_PROTOCOL_VERSION,
       serverTimestamp,
       payload: {
@@ -61,7 +63,7 @@ export function createControlResponse(
     type: 'control.pong',
     eventId,
     sessionId: parsed.data.sessionId,
-    revision: parsed.data.revision,
+    revision: options.revision ?? parsed.data.revision,
     schemaVersion: CONTROL_PROTOCOL_VERSION,
     serverTimestamp,
     payload: {

@@ -51,6 +51,10 @@ function fileUriToPath(uri: string) {
   return decodeURIComponent(uri.replace(/^file:\/\//, ''));
 }
 
+function snapshotItemForIdentification(item: SessionItem): SessionItem {
+  return { ...item, captures: [...item.captures] };
+}
+
 export function useSliceOneCaptureSession({
   activeItemRef,
   captureFeedback,
@@ -223,6 +227,7 @@ export function useSliceOneCaptureSession({
         await previewSavePromise;
 
         const retained: RetainedCapture = {
+          captureRequestedAtMs: requestAt,
           fileUri: persistedFile.uri,
           id: imageId,
           previewImage: item.finalized ? undefined : previewImage,
@@ -278,6 +283,13 @@ export function useSliceOneCaptureSession({
           itemClosed: item.finalized,
           needsReview: item.needsReview,
         });
+        if (nextCaptures.length === 1 && !item.finalized) {
+          traceRef.current?.mark('identity.speculative_requested', {
+            imageId,
+            itemIndex: item.itemIndex,
+          });
+          void identifyItem(snapshotItemForIdentification(item));
+        }
       } catch (error) {
         await previewSavePromise;
         if (persistedFile?.exists) persistedFile.delete();
@@ -299,6 +311,7 @@ export function useSliceOneCaptureSession({
       captureFeedback,
       captureInFlightRef,
       isCameraSwitching,
+      identifyItem,
       photoOutput,
       sessionState,
       state$,

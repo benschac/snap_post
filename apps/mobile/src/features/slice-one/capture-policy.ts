@@ -5,11 +5,12 @@ export const CAPTURE_POLICY = {
   minimumBrightness: 48,
   maximumBrightness: 212,
   maximumClippedRatio: 0.24,
-  maximumMotion: 13,
+  maximumMotion: 20,
   minimumQualityScore: 0.56,
   minimumSharpness: 11,
   replacementMargin: 0.06,
-  stableFramesRequired: 3,
+  stabilityWindowSize: 3,
+  stableFramesRequired: 2,
 } as const;
 
 export type FrameQualitySample = {
@@ -31,9 +32,18 @@ export type SelectedCapture = {
 
 export type CapturePolicyState = {
   lastCaptureAtMs: number;
+  recentTrackIds: Array<string | null>;
   stableFrames: number;
   stableTrackId: string | null;
 };
+
+export type CaptureQualityFailure =
+  | 'brightness-high'
+  | 'brightness-low'
+  | 'clipped'
+  | 'motion'
+  | 'quality-score'
+  | 'sharpness';
 
 export type CaptureDecision =
   | {
@@ -44,6 +54,7 @@ export type CaptureDecision =
 
 export const INITIAL_CAPTURE_POLICY_STATE: CapturePolicyState = {
   lastCaptureAtMs: Number.NEGATIVE_INFINITY,
+  recentTrackIds: [],
   stableFrames: 0,
   stableTrackId: null,
 };
@@ -58,15 +69,24 @@ export function signatureDistance(left: number[], right: number[]) {
   return difference / left.length;
 }
 
+export function captureQualityFailure(
+  sample: FrameQualitySample
+): CaptureQualityFailure | null {
+  if (sample.brightness < CAPTURE_POLICY.minimumBrightness) return 'brightness-low';
+  if (sample.brightness > CAPTURE_POLICY.maximumBrightness) return 'brightness-high';
+  if (sample.clippedRatio > CAPTURE_POLICY.maximumClippedRatio) return 'clipped';
+  if (sample.motion > CAPTURE_POLICY.maximumMotion) return 'motion';
+  if (sample.qualityScore < CAPTURE_POLICY.minimumQualityScore) return 'quality-score';
+  if (sample.sharpness < CAPTURE_POLICY.minimumSharpness) return 'sharpness';
+  return null;
+}
+
 export function isUsableSample(sample: FrameQualitySample) {
-  return (
-    sample.brightness >= CAPTURE_POLICY.minimumBrightness &&
-    sample.brightness <= CAPTURE_POLICY.maximumBrightness &&
-    sample.clippedRatio <= CAPTURE_POLICY.maximumClippedRatio &&
-    sample.motion <= CAPTURE_POLICY.maximumMotion &&
-    sample.qualityScore >= CAPTURE_POLICY.minimumQualityScore &&
-    sample.sharpness >= CAPTURE_POLICY.minimumSharpness
-  );
+  return captureQualityFailure(sample) === null;
+}
+
+function appendTrackObservation(state: CapturePolicyState, trackId: string | null) {
+  return [...(state.recentTrackIds ?? []), trackId].slice(-CAPTURE_POLICY.stabilityWindowSize);
 }
 
 export function evaluateCapture(
@@ -80,21 +100,24 @@ export function evaluateCapture(
   }
 
   if (!sample.trackId) {
+    const recentTrackIds = appendTrackObservation(state, null);
     return {
       decision: { action: 'hold', reason: 'no-object' },
-      state: { ...state, stableFrames: 0, stableTrackId: null },
+      state: { ...state, recentTrackIds, stableFrames: 0, stableTrackId: null },
     };
   }
 
   if (!isUsableSample(sample)) {
+    const recentTrackIds = appendTrackObservation(state, null);
     return {
       decision: { action: 'hold', reason: 'quality' },
-      state: { ...state, stableFrames: 0, stableTrackId: null },
+      state: { ...state, recentTrackIds, stableFrames: 0, stableTrackId: null },
     };
   }
 
-  const stableFrames = state.stableTrackId === sample.trackId ? state.stableFrames + 1 : 1;
-  const nextState = { ...state, stableFrames, stableTrackId: sample.trackId };
+  const recentTrackIds = appendTrackObservation(state, sample.trackId);
+  const stableFrames = recentTrackIds.filter((trackId) => trackId === sample.trackId).length;
+  const nextState = { ...state, recentTrackIds, stableFrames, stableTrackId: sample.trackId };
   if (stableFrames < CAPTURE_POLICY.stableFramesRequired) {
     return { decision: { action: 'hold', reason: 'stabilizing' }, state: nextState };
   }
@@ -109,14 +132,19 @@ export function evaluateCapture(
   if (duplicate) {
     return {
       decision: { action: 'hold', reason: 'duplicate' },
-      state: { ...state, stableFrames: 0, stableTrackId: null },
+      state: { ...state, recentTrackIds: [], stableFrames: 0, stableTrackId: null },
     };
   }
 
   if (selectedCaptures.length < CAPTURE_POLICY.maxSelectedCaptures) {
     return {
       decision: { action: 'capture' },
-      state: { lastCaptureAtMs: sample.atMs, stableFrames: 0, stableTrackId: null },
+      state: {
+        lastCaptureAtMs: sample.atMs,
+        recentTrackIds: [],
+        stableFrames: 0,
+        stableTrackId: null,
+      },
     };
   }
 
@@ -129,6 +157,11 @@ export function evaluateCapture(
 
   return {
     decision: { action: 'capture', replaceCaptureId: worstCapture.id },
-    state: { lastCaptureAtMs: sample.atMs, stableFrames: 0, stableTrackId: null },
+    state: {
+      lastCaptureAtMs: sample.atMs,
+      recentTrackIds: [],
+      stableFrames: 0,
+      stableTrackId: null,
+    },
   };
 }

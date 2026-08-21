@@ -112,6 +112,67 @@ test('returns a typed identity candidate for a selected preview', async () => {
   await events.return(undefined);
 });
 
+test('publishes a partial identity candidate before the final provider result', async () => {
+  const serverEvents = new ServerEventBroker();
+  const events = serverEvents.subscribe('session-1');
+  const app = createApiApp({
+    serverEvents,
+    identifyImage: async (_input, options) => {
+      options?.onPartialInference?.({
+        level: 'brand_category',
+        category: 'e-reader',
+        brand: 'Amazon',
+        productName: null,
+        model: null,
+        variant: null,
+        confidence: 0.72,
+        visibleText: [],
+        searchQuery: null,
+      });
+      return {
+        requestId: 'gateway-request-streamed',
+        model: 'google/gemini-3.7-flash',
+        latencyMs: 220,
+        inference: {
+          level: 'product_family',
+          category: 'e-reader',
+          brand: 'Amazon',
+          productName: 'Kindle',
+          model: null,
+          variant: null,
+          confidence: 0.84,
+          visibleText: ['kindle'],
+          searchQuery: null,
+        },
+      };
+    },
+  });
+
+  const response = await app.request('http://localhost/v1/identify', {
+    method: 'POST',
+    headers: requestHeaders,
+    body: new Uint8Array([1]),
+  });
+  assert.equal(response.status, 200);
+  await response.text();
+
+  const partial = await events.next();
+  const final = await events.next();
+  assert.equal(partial.value?.type, 'identity.candidate');
+  assert.equal(final.value?.type, 'identity.candidate');
+  if (
+    partial.value?.type !== 'identity.candidate' ||
+    final.value?.type !== 'identity.candidate'
+  ) {
+    assert.fail('Expected partial and final identity candidates');
+  }
+  assert.equal(partial.value.payload.level, 'brand_category');
+  assert.equal(final.value.payload.productName, 'Kindle');
+  assert.equal(final.value.revision, partial.value.revision + 1);
+
+  await events.return(undefined);
+});
+
 test('accepts three JPEG views in one multipart identification request', async () => {
   const app = createApiApp({
     identifyImage: async ({ images }) => {

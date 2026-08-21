@@ -252,7 +252,7 @@ export const ClientEventSchema = z.union([
   ClientDomainEventSchema,
 ]);
 
-const IdentityCandidatePayloadSchema = z.object({
+export const IdentityCandidatePayloadSchema = z.object({
   candidateId: IdentifierSchema,
   level: z.enum(['category', 'brand_category', 'product_family', 'exact_model']),
   category: z.string().min(1),
@@ -289,7 +289,16 @@ const ClaimPatchSchema = z.object({
 export const EvidencePatchEventSchema = z.object({
   ...ServerEventEnvelopeShape,
   type: z.literal('evidence.patch'),
-  payload: z.object({ claims: z.array(ClaimPatchSchema).min(1) }),
+  payload: z.object({
+    claims: z.array(ClaimPatchSchema).min(1),
+    provider: z
+      .object({
+        name: z.literal('exa'),
+        requestId: IdentifierSchema,
+        latencyMs: z.number().nonnegative(),
+      })
+      .optional(),
+  }),
 });
 
 export const MetadataPatchEventSchema = z.object({

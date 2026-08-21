@@ -24,6 +24,7 @@ import {
 import {
   identifyVisualItem,
   VisualIdentityError,
+  type VisualIdentityOptions,
   type VisualIdentityResult,
 } from './providers/visual-identity.ts';
 import {
@@ -35,12 +36,15 @@ import { ServerEventBroker } from './server-events.ts';
 const MAX_IDENTIFICATION_IMAGE_BYTES = 2 * 1024 * 1024;
 const MAX_IDENTIFICATION_IMAGES = 3;
 
-export type IdentifyImage = (input: {
-  images: Array<{
-    contentType: 'image/jpeg';
-    imageBytes: Uint8Array;
-  }>;
-}) => Promise<VisualIdentityResult>;
+export type IdentifyImage = (
+  input: {
+    images: Array<{
+      contentType: 'image/jpeg';
+      imageBytes: Uint8Array;
+    }>;
+  },
+  options?: Pick<VisualIdentityOptions, 'onPartialInference'>,
+) => Promise<VisualIdentityResult>;
 
 export type SearchEvidence = (query: string) => Promise<ExaSearchResponse>;
 
@@ -398,7 +402,50 @@ export function createApiApp(options: ApiAppOptions = {}) {
           imageCount: images.length,
         });
 
-        const result = await identifyImage({ images });
+        const publishIdentityCandidate = (
+          inference: VisualIdentityResult['inference'],
+          sourceId: string,
+        ) => {
+          const identityEvent = IdentityCandidateEventSchema.parse({
+            type: 'identity.candidate',
+            eventId: randomUUID(),
+            sessionId: metadata.data.sessionId,
+            itemIntentId: metadata.data.itemIntentId,
+            revision: serverEvents.nextRevision(metadata.data.sessionId),
+            schemaVersion: CONTROL_PROTOCOL_VERSION,
+            serverTimestamp: new Date().toISOString(),
+            payload: {
+              candidateId: `${metadata.data.itemIntentId}:${metadata.data.imageId}:visual-identity`,
+              level: inference.level,
+              category: inference.category,
+              brand: nullableValue(inference.brand),
+              productName: nullableValue(inference.productName),
+              model: nullableValue(inference.model),
+              variant: nullableValue(inference.variant),
+              confidence: inference.confidence,
+              provenance: [{ sourceId, sourceType: 'provider' }],
+            },
+          });
+          serverEvents.publish(identityEvent);
+          logger('info', 'identity.event_published', {
+            ...metadata.data,
+            revision: identityEvent.revision,
+            partial: sourceId.endsWith(':stream'),
+          });
+          return identityEvent;
+        };
+
+        const result = await identifyImage(
+          { images },
+          {
+            onPartialInference: (inference) => {
+              publishIdentityCandidate(
+                inference,
+                `${metadata.data.itemIntentId}:visual-identity:stream`,
+              );
+            },
+          },
+        );
         const { inference } = result;
         logger('info', 'identity_provider.request_completed', {
           ...metadata.data,
@@ -447,21 +494,7 @@ export function createApiApp(options: ApiAppOptions = {}) {
           },
         });
 
-        const identityEvent = IdentityCandidateEventSchema.parse({
-          type: 'identity.candidate',
-          eventId: randomUUID(),
-          sessionId: response.sessionId,
-          itemIntentId: response.itemIntentId,
-          revision: serverEvents.nextRevision(response.sessionId),
-          schemaVersion: CONTROL_PROTOCOL_VERSION,
-          serverTimestamp: new Date().toISOString(),
-          payload: response.candidate,
-        });
-        serverEvents.publish(identityEvent);
-        logger('info', 'identity.event_published', {
-          ...metadata.data,
-          revision: identityEvent.revision,
-        });
+        publishIdentityCandidate(result.inference, result.requestId);
 
         await responseStream.write(
           ndjson(IdentifyStreamResultSchema.parse({ type: 'result', response })),

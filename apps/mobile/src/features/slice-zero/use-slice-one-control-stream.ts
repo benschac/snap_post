@@ -69,9 +69,34 @@ export function useSliceOneControlStream(state$: Observable<SliceOneViewState>) 
           if (sessionIdRef.current !== sessionId) break;
 
           if (event.type === 'identity.candidate') {
+            const expectedImageId = state$.identityRequestImageIds.peek()[event.itemIntentId];
+            if (
+              expectedImageId &&
+              !event.payload.candidateId.includes(`:${expectedImageId}:`)
+            ) {
+              trace.mark('identity.candidate_stale', {
+                candidateId: event.payload.candidateId,
+                expectedImageId,
+                itemIntentId: event.itemIntentId,
+                revision: event.revision,
+              });
+              continue;
+            }
             const label = formatIdentityCandidate(event.payload);
+            const timing = state$.identityRequestTimings.peek()[event.itemIntentId];
+            const candidateReceivedAtMs = performance.now();
+            const requestToValidCandidateMs = timing
+              ? candidateReceivedAtMs - timing.requestStartedAtMs
+              : undefined;
+            const captureToValidCandidateMs = timing
+              ? candidateReceivedAtMs - timing.captureRequestedAtMs
+              : undefined;
             state$.identificationStatus.set(
-              `${event.itemIntentId} · ${label} · ${(event.payload.confidence * 100).toFixed(0)}%`
+              `${event.itemIntentId} · ${label} · ${(event.payload.confidence * 100).toFixed(0)}%${
+                requestToValidCandidateMs === undefined
+                  ? ''
+                  : ` · ${requestToValidCandidateMs.toFixed(0)} ms`
+              }`
             );
             trace.mark('identity.candidate_streamed', {
               itemIntentId: event.itemIntentId,
@@ -79,6 +104,8 @@ export function useSliceOneControlStream(state$: Observable<SliceOneViewState>) 
               brand: event.payload.brand,
               productName: event.payload.productName,
               confidence: event.payload.confidence,
+              captureToValidCandidateMs,
+              requestToValidCandidateMs,
               revision: event.revision,
             });
             continue;

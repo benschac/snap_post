@@ -1,8 +1,8 @@
 # Snap to Post: complete plan index
 
-Updated: 2026-08-20 (implementation checkpoint; gating questions remain governed by the [decision log](./decision-log.md))
+Updated: 2026-08-20 (oRPC transport checkpoint; gating questions remain governed by the [decision log](./decision-log.md))
 
-Status: implementation is underway. Slice B0's database/schema foundation is complete locally; runtime persistence, signed uploads, and physical end-to-end proof remain.
+Status: implementation is underway. Slice B0's database/schema foundation, contract-first oRPC transport, and transactional event ingestion are complete locally; durable replay/reconnection, signed uploads, and physical end-to-end proof remain.
 
 ## What “the complete plan” means
 
@@ -401,17 +401,20 @@ Build the Start, Stop, and Next Item controls, camera stability and quality scor
 
 #### Slice B0: Backend skeleton (parallel with Slices 0–1)
 
-Local Hono/Node gateway (pnpm, `tsx watch`, `@hono/node-server` v2 plus `ws`) on the Mac with the phone over LAN; typed WebSocket event payloads; Drizzle ORM plus Postgres.js as the server-only typed query/transaction layer; prototype-owned sessions/item-intents/tracks/images/control-events/claims/price tables in an isolated `snap_to_post` schema on a local/dev Supabase copy (pg_dump restore when first-party retrieval data is needed, pgvector enabled); Supabase SQL migrations as the sole migration/deployment authority, including hand-written RLS/grants and Storage policy SQL; a private signed-upload path to Supabase Storage; one device→server→device echo; provider spend/concurrency caps. The established marketplace project is read-only reference data and never the B0 write target; do not use `drizzle-kit push` or a separate Drizzle migration ledger against shared/remote databases.
+Local Hono/Node gateway (pnpm, `tsx watch`, `@hono/node-server` v2 plus `ws`) on the Mac with the phone over LAN; pinned stable oRPC contract-first `control.publish` and streaming `control.subscribe` procedures around the shared Zod event envelopes; Drizzle ORM plus Postgres.js as the server-only typed query/transaction layer; prototype-owned sessions/item-intents/tracks/images/control-events/claims/price tables in an isolated `snap_to_post` schema on a local/dev Supabase copy (pg_dump restore when first-party retrieval data is needed, pgvector enabled); Supabase SQL migrations as the sole migration/deployment authority, including hand-written RLS/grants and Storage policy SQL; a private signed-upload path to Supabase Storage; one device→server→device echo; provider spend/concurrency caps. The established marketplace project is read-only reference data and never the B0 write target; do not use `drizzle-kit push` or a separate Drizzle migration ledger against shared/remote databases.
 
 Progress checkpoint — 2026-08-20:
 
-- [x] Create the local Hono/Node gateway, health route, and typed `control.ping` → `control.pong` WebSocket path.
-- [x] Define the typed client/server event payload contract in the shared protocol package.
+- [x] Create the local Hono/Node gateway and health route.
+- [x] Define the runtime-validated client/server event envelopes with Zod in the shared protocol package.
+- [x] Wrap those envelopes in pinned oRPC 1.15 `control.publish` and async `control.subscribe` contracts, wire the Node WebSocket handler and inferred Expo client, and prove typed ping/pong through an ephemeral API integration test.
+- [x] Add a repeatable 500-publish loopback benchmark. The latest isolated run measured approximately 0.33 ms p95 versus the earlier raw JSON/Zod baseline of 0.184 ms; this is local framing evidence, not phone-over-LAN proof.
 - [x] Add the server-only Postgres.js/Drizzle client and isolate the prototype tables in the `snap_to_post` PostgreSQL schema.
 - [x] Define sessions, item intents, tracks, images, control-event idempotency records, claims/evidence, and price observations in Drizzle with constraints, indexes, inferred types, and RLS declarations.
 - [x] Generate the reviewed base migration through Drizzle Kit and keep Supabase migrations as the sole deployment history; retain companion SQL for extensions, grants, default privileges, and the private Storage bucket.
 - [x] Verify the schema statically and exercise a transaction against the configured integration database when `DATABASE_URL` is available.
-- [ ] Persist validated domain events transactionally: record each event ID once, then materialize the corresponding session, intent, track, image, claim/evidence, or price state.
+- [x] Persist the initial seven domain events transactionally through an injected Drizzle dependency. Projection writes and the immutable `control_events` row commit together; item sequences are allocated under a session-row lock; identical retries return the original receipt; mismatched event-ID reuse is rejected; and oRPC acknowledges only after commit.
+- [ ] Back `control.subscribe({ afterRevision })` with durable `control_events` replay and add the mobile connection/reconnect/background lifecycle. The current publisher is process-local and streams only future events.
 - [ ] Add the narrowly scoped signed-upload endpoint and complete the selected-image upload receipt flow.
 - [ ] Add provider request ceilings and concurrency caps before external identification providers are enabled.
 - [ ] Prove one physical device → LAN server → database/upload → device round trip; the automated ping/pong test is not physical-device evidence.
@@ -502,9 +505,11 @@ The companion learning guide covers:
 
 - the Expo application repository at this repo root (`app.json`, prebuilt `ios/`, `newArchEnabled: true`);
 - a decision log resolving all implementation-gating questions: device (iPhone 17 Pro), backend (local Hono/Node over LAN), datastore (dev Supabase copy + pgvector + Supabase Storage), credentials (Groq + Exa only), package pruning and deferrals;
-- the local Hono/Node API scaffold with health and typed WebSocket ping/pong paths;
-- shared typed client/server event payload schemas;
+- the local Hono/Node API scaffold with health plus contract-first oRPC publish/subscribe over WebSockets;
+- shared Zod client/server event envelopes, oRPC input/output contracts, and an inferred Expo control client;
+- an API integration test for typed publish/subscribe and a repeatable local loopback latency benchmark;
 - the Postgres.js/Drizzle database client, complete prototype schema, generated Supabase migration, companion Supabase configuration migration, and schema/integration tests.
+- transactional ingestion for `session.started`, `item.intent_started`, `item.track_started`, `item.track_attached`, `image.selected`, `image.uploaded`, and `item.closed`, including atomic item sequencing and event-ID idempotency.
 
 ### Does not exist yet
 
@@ -513,7 +518,7 @@ The companion learning guide covers:
 - the 30–50-item labeled evaluation corpus;
 - a model/retrieval benchmark harness;
 - measured quality, latency, memory, network, or thermal results;
-- runtime persistence handlers that apply validated domain events to the database;
+- durable subscription replay and the mobile reconnect/background connection manager;
 - the signed-upload API and completed Supabase Storage upload-receipt flow;
 - Groq/Exa credentials (self-serve, needed by Slices 2–3);
 - an audited mapping from the existing marketplace schema into learning labels;
@@ -527,6 +532,20 @@ Those are implementation and evidence artifacts, not missing planning prose.
 
 Planning should stop expanding until implementation produces new evidence.
 
-The next B0 action is to connect the validated WebSocket domain-event contract to transactional Drizzle persistence. Start with `session.started`, `item.intent_started`, track attach/start, image selected/uploaded, and `item.closed`; insert each event ID once in `control_events` and materialize its associated row changes in the same transaction so retries are idempotent.
+### Completed milestone: B0 transactional event ingestion
 
-After that, add the narrowly scoped signed-upload endpoint and prove the first physical device → LAN server → database/upload → device round trip. Slice 1's zero-tap capture work can continue in parallel, but neither automated tests nor a Simulator-only run count as physical-device proof. The 30–50-item evaluation manifest follows once the capture loop exists.
+1. Refactor [`apps/api/src/orpc.ts`](../apps/api/src/orpc.ts) into a router factory that accepts an injected Drizzle database dependency. Keep `control.ping` database-free so health/transport diagnostics remain available independently of persistence.
+2. Add one persistence dispatcher for `session.started`, `item.intent_started`, `item.track_started`, `item.track_attached`, `image.selected`, `image.uploaded`, and `item.closed`. Use the client timestamp for the projection's occurrence time, allocate `item_intents.sequence` server-side while locking the owning session row, and map only identifiers that already have valid foreign-key targets.
+3. In one Drizzle transaction, detect an existing `control_events.id`, materialize the relevant projection row or update, and insert the immutable event record. An identical retry returns the original successful receipt without a second mutation; reuse of an event ID with different content is rejected; a concurrent duplicate either wins once or rolls back completely.
+4. Publish downstream server events only after commit. A failed transaction must produce no acknowledgement that implies persistence and no process-local subscriber event.
+5. Add unit tests for every event-to-row mapping and database integration tests for the happy path, identical retry, mismatched event-ID reuse, concurrent duplicate, missing parent, and transaction rollback. The existing protocol/API/mobile typechecks and tests must remain green.
+
+Acceptance for this milestone: a published supported domain event is acknowledged only after its projection and immutable ledger row commit together; replaying the same event is harmless; and tests can prove that no partial row survives a failed or racing transaction.
+
+Completed locally on 2026-08-20. The focused database suite proves all seven projections, identical retry, concurrent duplicate serialization, atomic item sequence allocation, mismatched event-ID rejection, missing-parent rollback, projection-failure rollback, and oRPC receipt-after-commit readback against the isolated local Supabase schema.
+
+### Next milestone: durable replay and mobile reconnection
+
+Back `control.subscribe({ afterRevision })` with ordered durable replay from `control_events`, close the replay/live handoff race, and add the Expo connection manager for reconnect and foreground/background transitions. Keep session capture and Next Item transitions local and non-blocking.
+
+Next, implement durable `afterRevision` replay plus the mobile reconnect/background lifecycle, then add the narrowly scoped signed-upload endpoint and complete the selected-image upload receipt flow. The next B0 proof gate is one physical device → LAN server → database/upload → device round trip. Provider request ceilings and concurrency caps must land before Slices 2–3 enable external providers. Slice 1's zero-tap capture work can continue in parallel, but neither automated tests nor a Simulator-only run count as physical-device proof. The 30–50-item evaluation manifest follows once the capture loop exists.

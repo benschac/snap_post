@@ -6,7 +6,7 @@
     },
     "dev": {
       "cache": false,
-      "env": ["DATABASE_URL", "EXPO_PUBLIC_API_URL", "HOST", "PORT"],
+      "env": ["DATABASE_URL", "EXPO_PUBLIC_API_URL", "GROQ_API_KEY", "GROQ_VISION_MODEL", "HOST", "PORT"],
       "persistent": true
     },
     "ios": {
@@ -14,6 +14,12 @@
     },
     "ios:dev-client": {
       "cache": false
+    },
+    "start": {
+      "cache": false,
+      "env": ["DATABASE_URL", "EXPO_PUBLIC_API_URL", "GROQ_API_KEY", "GROQ_VISION_MODEL", "HOST", "PORT"],
+      "interactive": true,
+      "persistent": true
     },
     "lint": {},
     "test": {

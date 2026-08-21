@@ -1,7 +1,7 @@
 # Snap to Post: living product and technical brief
 
-Status: implementation-ready draft 0.9  
-Updated: 2026-08-18  
+Status: implementation underway — native capture and backend foundations built; end-to-end proof incomplete
+Updated: 2026-08-21
 Purpose: turn a continuous camera-and-voice session into a fast, evidence-backed used-item listing draft.
 
 ## Confirmed product decisions
@@ -37,6 +37,32 @@ Purpose: turn a continuous camera-and-voice session into a fast, evidence-backed
 - **Review rejection:** the exact behavior of the review “No” action is intentionally deferred; it is not required to prove capture, enrichment, or review.
 
 These answers remove third-party listing schemas from the prototype and make the existing marketplace's retrieval and transaction history a central strategic advantage.
+
+## Current implementation checkpoint — 2026-08-21
+
+This checkpoint distinguishes code presence, local/static validation, and physical-device proof. A slice is not complete merely because its source and unit tests exist. The latest durable decisions remain in [the decision log](./decision-log.md); when implementation changes again, the owning code and a new dated evidence artifact supersede this snapshot.
+
+Overall estimate: roughly **35–40% of the proof-of-concept implementation exists**, while roughly **20–25% of the complete plan has physical or end-to-end acceptance evidence**. The foundation is substantially ahead of the final product experience: capture, transport, persistence, and an early visual-identity path exist, but the full capture → identify → enrich → review loop has not been demonstrated.
+
+| Slice | Implementation status | Validation boundary | Remaining acceptance work |
+|---|---|---|---|
+| **0 — native compatibility** | Substantially implemented: Expo development client, stable VisionCamera session, photo/frame outputs, explicit frame disposal and backpressure, Skia overlay, ExecuTorch initialization/inference, barcode/resizer integration, native PCM capture, telemetry, and trace export. | Static checks and native builds passed; later physical traces prove the camera, detector, analysis, and capture path can run on the target iPhone. | Complete and record the ordered physical ladder in one current-source Debug/dev-client run, including the 10-minute thermal/memory soak and final version matrix. |
+| **1 — zero-tap capture** | Substantially implemented: object tracking, label-agnostic/salient proposals, quality/stability/novelty gates, automatic best-view retention, Next Item behavior, haptic/visual feedback, diagnostic bundles, and focused tests. | A physical trace reached 4.97 analysis FPS with zero rejected analysis jobs and retained nine photos. A later portrait coordinate-space regression was fixed and statically tested. | Run the exact post-fix physical test at 5 FPS; prove useful nonduplicate captures, correct item boundaries, visible feedback, acceptable first-capture latency, and the 10-minute soak. Detector suitability remains open if `no-object` continues to dominate. |
+| **B0 — backend skeleton** | Mostly implemented locally: pnpm/Turborepo packages, Hono/Node service, shared Zod contracts, oRPC publish/subscribe transport, private `snap_to_post` Drizzle schema and Supabase migrations, transactional ingestion of the initial seven domain events, idempotency, and provider request/concurrency budgets. | Typechecks, unit/API tests, ephemeral transport integration, local database integration in configured runs, and local loopback measurements exist. | Add durable `afterRevision` replay, close the replay/live race, implement mobile reconnect/background lifecycle, add narrowly scoped signed uploads, and prove one physical phone → LAN API → database/storage → phone round trip. |
+| **2 — exact identifiers** | Early partial. Barcode capability and typed identity/evidence contracts exist, and selected images can reach the backend. | No representative identifier-rich benchmark or complete barcode/OCR → retrieval → canonical-page validation trace exists. | Implement OCR/model-number extraction, first-party lexical/vector retrieval, canonical product cache, manufacturer/current-retail validation, and streamed evidence patches; evaluate on labeled identifier-rich items. |
+| **3 — visual identity** | Early partial. Completed items can send up to two retained JPEG views to a server-side Groq vision path; Exa discovery runs asynchronously; identity and evidence events stream under bounded provider budgets. | Provider parsers and API behavior have tests, and one local live sample was recorded. This is not a physical-device latency or accuracy benchmark. | Add first-party image retrieval, disagreement/fallback behavior, calibration, and a labeled visual-only benchmark covering generic/unknown outcomes and multiple views. |
+| **4 — voice and condition** | Foundation only. The native module captures 16 kHz mono PCM and exposes audio/performance telemetry. | Microphone capture is not proof of transcription quality or correct item association. | Implement Apple `SpeechAnalyzer` partial/final transcription, write and test the speech↔item-boundary rules, preserve explicit condition statements, and benchmark representative narration. |
+| **5 — enrichment and valuation** | Contracts/schema only. Claims, evidence provenance, and distinct price lanes are represented in the protocol/database. | No complete manufacturer/current-retail validation, valuation recommendation, listing-draft generator, or user-visible price evidence flow exists. | Define the listing-draft field schema, implement sourced enrichment and valuation, preserve price-lane semantics, and stream versioned draft patches without overwriting user decisions. |
+| **6 — review and play session** | Not implemented as a product slice. Trace summaries can flag weak-capture items, but there is no inventory review queue. | No realistic five-to-ten-minute mixed-item session has exercised the complete pipeline. | Build yes/no/edit review, protect user edits from background overwrite, then run the storage-unit play session and measure throughput, misses, duplicates, backlog, latency, accuracy, memory, thermals, and review friction. |
+
+### Current critical path
+
+1. **Close the Slice 1 physical gate.** Reload the current JavaScript into the Debug Expo development client, keep the analysis profile at 5 FPS, capture the same mixed ordinary objects, export the diagnostic bundle, and complete the 10-minute soak. Stop threshold/FPS tuning if `no-object` still dominates or useful first capture remains roughly over 10 seconds; investigate detector suitability or the generic salient-object fallback instead.
+2. **Make B0 resumable.** Back `control.subscribe({ afterRevision })` with ordered `control_events` replay, close the replay/live handoff race, and add the mobile foreground/background reconnect manager. Capture and Next Item remain local and never wait for an acknowledgement.
+3. **Complete the selected-image storage boundary.** Add a narrowly scoped signed-upload endpoint and idempotent upload receipt, then prove a physical phone → LAN API → isolated local/dev Supabase database and private Storage bucket → phone result round trip. Production and the existing marketplace project remain read-only.
+4. **Create the evaluation crate.** Select and label 30–50 physical items across identifier-rich, branded/ambiguous, and generic/visual-only lanes before comparing identity approaches.
+5. **Finish Slices 2 and 3 against that corpus.** Add exact identifiers, first-party retrieval, canonical evidence validation, visual fallback, and measurable confidence degradation before expanding provider count or training a model.
+6. **Then add speech, enrichment, and review.** Implement Apple speech/item binding, sourced current-retail and listing drafts, and finally the review queue and realistic play session.
 
 ## Directional hard north star
 
@@ -207,7 +233,7 @@ Auto-capture should be a scored gate rather than a timer. A first pass can combi
 
 The first prototype should keep the normal VisionCamera preview and draw Skia/Reanimated overlays above it. A full `SkiaCamera` preview is an experiment, not a prerequisite: it always adds its own frame output and can increase the GPU/thermal budget. Measure it only if the desired overlay cannot remain smooth with the simpler composition.
 
-VisionCamera v5 requires `react-native-vision-camera-worklets` for frame processing. Every received frame must be disposed, and busy processors should drop work rather than create an unbounded queue. The current package list has `react-native-worklets` but not the VisionCamera-specific worklets package.
+VisionCamera v5 requires `react-native-vision-camera-worklets` for frame processing. The aligned 5.2.2 worklets, resizer, and barcode packages are installed. Every received frame must still be disposed, and busy processors must drop work rather than create an unbounded queue.
 
 ### What belongs on device
 
@@ -884,68 +910,31 @@ Apply these in order so native complexity buys a measured result:
 
 Product discovery is complete. The formerly open gating questions are answered; details live in [the decision log](./decision-log.md).
 
-1. **Repository:** the Expo app exists at this repo root (`app.json`, prebuilt `ios/`, `src/`, `newArchEnabled: true`). Slice 0 works in place; no scaffolding.
-2. **Native changes:** approved. Slice 0 prunes the experiment-lane packages (`@react-native-runtimes/*`, `typegpu`, `@typegpu/react`, `react-native-webgpu`, `unplugin-typegpu`), adds the VisionCamera worklets/resizer/barcode plugins, adds the missing `NSMicrophoneUsageDescription`, and rebuilds the development client. The Nitro fetch/WebSocket/text-decoder packages are **deferred** (peer-dependency conflict as of 2026-08-18, and not needed before profiling).
+1. **Repository:** this is now a pnpm/Turborepo workspace. `apps/mobile` owns the Expo application, `apps/api` owns the Hono/Node control plane, and `packages/protocol` owns runtime-neutral shared contracts. Run Expo through the root scripts or from `apps/mobile`, never as a root Expo project.
+2. **Native changes:** approved and implemented for the current capture foundation. The experiment-lane TypeGPU/WebGPU packages were pruned; the aligned VisionCamera worklets/resizer/barcode plugins and `NSMicrophoneUsageDescription` are present; the Debug development-client path is the current-source physical-test lane. Nitro fetch/WebSocket/text-decoder remain deferred until profiling shows a need.
 3. **Benchmark device:** iPhone 17 Pro. `SpeechAnalyzer` is available, so on-device Apple speech is the first STT lane with no API key. Cloud STT is benchmarked only if Apple quality/latency disappoints.
-4. **Credentials:** none exist today; only two are needed for the PoC — Groq (fast VLM) and Exa (web discovery), both instant self-serve. Object storage is Supabase Storage. Everything else (eBay, GS1, Keepa, Deepgram/ElevenLabs, Perplexity, Firecrawl/Browserbase) is deferred until a slice measurably needs it.
+4. **Credentials:** Groq and Exa are the only provider credentials used by the implemented identification path, and both remain server-side. Whether a given checkout has live credentials is environment-specific and must not be inferred from source. Object storage is Supabase Storage. Everything else (eBay, GS1, Keepa, Deepgram/ElevenLabs, Perplexity, Firecrawl/Browserbase) remains deferred until a slice measurably needs it.
 5. **Backend:** a single Hono process on Node (pnpm workspace, `tsx watch`, `@hono/node-server` v2 plus `ws`) running locally on the Mac, phone connecting over LAN. First-party data comes from a `pg_dump` of the live Supabase database restored into a dev project or local Postgres with pgvector — the prototype never touches live marketplace data. Fly.io (US East) is the later off-LAN deployment path; Vercel is not used for the control plane because it cannot hold the persistent WebSocket.
 6. **Evaluation crate:** still to be picked — 30–50 physical items across the three difficulty lanes. Not blocking Slice 0.
 
 Nothing else should delay implementation. Review rejection semantics, secondhand-source coverage, post-training, multi-item stitch mode, Android, and a custom ANN index can all be decided from measured prototype evidence.
 
-## Codex implementation handoff
+## Current implementation handoff
 
-This entire comprehensive plan lives in this Markdown file. It is sufficient guidance for Codex to produce a strong first implementation without the user directing every file or step. The missing inputs are repository access, permission for native dependency/build changes, physical-device signing/access, and provider credentials when the remote slices begin.
+Resume from the **Current critical path**, not from the original Slice 0 bootstrap instructions. Preserve the current monorepo boundaries and the substantial unrelated work already present in the working tree.
 
-Use a quality-first model setting for the first native integration. `max` is reasonable for the initial architecture/build pass because this combines React Native, Swift, C++/Nitro, model-runtime compatibility, physical-device instrumentation, and backend contracts. `xhigh` is likely enough for later focused iterations. The important part is the verifiable task contract, not simply selecting the largest reasoning setting.
-
-Recommended long-running handoff:
+The next completion target is a reproducible physical-device evidence chain:
 
 ```text
-/goal Build Snap-to-Post slices 0 and 1 from
-outputs/snap-to-post-project-brief.md, following the decisions in
-outputs/decision-log.md.
-
-The Expo app lives at the repo root (pnpm). Work autonomously through
-reversible local changes. Preserve unrelated work.
-
-Slice 0 is an ordered sub-gate ladder:
-1. Prune @react-native-runtimes/*, typegpu, @typegpu/react,
-   react-native-webgpu, and unplugin-typegpu from package.json.
-   Do NOT add react-native-nitro-fetch/-websockets/-text-decoder
-   (known peer-dependency conflict; not needed yet).
-2. Add react-native-vision-camera-worklets, -resizer, and
-   -barcode-scanner at 5.2.2; add NSMicrophoneUsageDescription.
-3. Build the development client for the physical iPhone 17 Pro.
-4. Climb: preview -> photo output -> worklets frame processor with
-   verified disposal -> Skia overlay -> ExecuTorch init plus one
-   inference with a library-hosted model -> mic capture ->
-   barcode/resizer -> 10-minute soak.
-
-If ExecuTorch fails on RN 0.86: proceed without it, use heuristic
-frame-quality gates (blur, exposure, motion) for slice 1, and record
-the failure. Do not downgrade Expo or React Native.
-
-Use the existing native libraries before writing custom C++.
-Instrument every latency marker defined in the brief.
-
-Done means:
-- the development client builds for the physical iPhone 17 Pro;
-- camera preview, photo output, and one frame output remain mounted and stable;
-- the ExecuTorch baseline runs (or its failure and the heuristic fallback
-  are documented);
-- automatic capture retains distinct clean shots and gives local feedback;
-- Start, the Next Item button, Stop, manual debug capture, and the performance HUD work;
-- a 10-minute physical-device run exports a JSON trace;
-- the passing version matrix (Xcode, iOS, Expo, RN, every native package)
-  plus build, runtime, latency, thermal, dropped-frame, and remaining-risk
-  evidence are recorded in outputs/decision-log.md.
-
-Stop for credentials, signing that requires user action, destructive operations,
-or a measured decision between materially different architectures.
+1. Prove current-source Slice 1 capture at 5 FPS in the Debug Expo dev client.
+2. Export the diagnostic bundle and complete the 10-minute soak.
+3. Implement durable control-event replay and mobile reconnection.
+4. Implement signed selected-image upload and idempotent receipt.
+5. Prove phone -> LAN API -> isolated database/storage -> phone.
+6. Build the 30–50-item labeled evaluation crate before widening identity work.
 ```
 
-One uninterrupted run can produce the first working draft. It cannot prove the final “magic” by reasoning alone. Expect short human checkpoints for Xcode signing/device permissions, a 10-minute physical run, choosing provider credentials, and handling objects the model gets wrong. Codex can own the implementation, instrumentation, comparison, and documentation between those checkpoints.
+Done for this checkpoint means useful nonduplicate automatic captures with correct item boundaries; a trace-backed physical soak; replay-safe reconnect behavior; a private signed-upload round trip; and explicit latency, dropped-frame, thermal, persistence, and remaining-risk evidence. Static tests, Simulator behavior, a Release binary, or local provider samples do not substitute for that physical proof.
 
 ## Current package-list assessment
 
@@ -959,13 +948,13 @@ One uninterrupted run can produce the first working draft. It cannot prove the f
 - Skia 2.6.2 for overlays
 - Expo File System / Asset for model and media handling
 
-### Add or verify before frame-processing work
+### Installed and verified in source; retain through physical validation
 
-- `react-native-vision-camera-worklets` (exists, 5.2.2, aligned with VisionCamera 5.2.2)
-- `react-native-vision-camera-resizer` (exists, 5.2.2)
-- `react-native-vision-camera-barcode-scanner` (exists, 5.2.2)
-- microphone permission configuration (`NSMicrophoneUsageDescription` is currently missing from `app.json`; camera permission already present)
-- `initExecutorch(...)` at the app entry point
+- `react-native-vision-camera-worklets` 5.2.2, aligned with VisionCamera 5.2.2
+- `react-native-vision-camera-resizer` 5.2.2
+- `react-native-vision-camera-barcode-scanner` 5.2.2
+- camera and microphone permission configuration, including `NSMicrophoneUsageDescription`
+- `initExecutorch(...)` at the mobile app entry point
 - a custom Expo development build; this stack will not run in standard Expo Go
 
 ### Deferred: Nitro networking (verified conflict, 2026-08-18)
@@ -976,7 +965,7 @@ One uninterrupted run can produce the first working draft. It cannot prove the f
 - `react-native-nitro-websockets`
 - `react-native-nitro-text-decoder`
 
-### Prune before the first Slice 0 build, re-add individually later
+### Pruned from the core path; re-add individually only after measurement
 
 These are declared experiments elsewhere in this brief and only add native build-failure surface to the compatibility gate:
 
@@ -988,7 +977,7 @@ These are declared experiments elsewhere in this brief and only add native build
 
 - custom Nitro/C++ modules
 
-The React Native ExecuTorch docs' compatibility table currently stops at React Native 0.85 and Expo 55, while the published Expo resource-fetcher package metadata accepts Expo 54+. That is not proof of SDK 57/React Native 0.86 compatibility. A physical-device native build is an explicit phase-zero gate.
+The React Native ExecuTorch docs' compatibility table stopped at React Native 0.85 and Expo 55 when this plan was written, while the published Expo resource-fetcher package metadata accepted Expo 54+. The current SDK 57 / React Native 0.86 checkout has built and run the library-hosted detector on the target iPhone, but that does not replace the remaining current-source soak, accuracy, memory, and thermal gates.
 
 ## Using existing posts for learning
 

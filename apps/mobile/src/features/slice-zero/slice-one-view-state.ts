@@ -67,6 +67,11 @@ export type SliceOneViewState = {
   errorMessage: string | null;
   exportUri: string | null;
   identificationStatus: string;
+  identityRequestImageIds: Record<string, string>;
+  identityRequestTimings: Record<
+    string,
+    { captureRequestedAtMs: number; requestStartedAtMs: number }
+  >;
   isCapturing: boolean;
   metrics: Metrics;
   modelProbeRequested: boolean;
@@ -90,7 +95,9 @@ export function createInitialSliceOneViewState(): SliceOneViewState {
     elapsedMs: 0,
     errorMessage: null,
     exportUri: null,
-    identificationStatus: 'Identity API waiting for a completed item',
+    identificationStatus: 'Identity API waiting for a selected image',
+    identityRequestImageIds: {},
+    identityRequestTimings: {},
     isCapturing: false,
     metrics: { ...EMPTY_METRICS },
     modelProbeRequested: false,

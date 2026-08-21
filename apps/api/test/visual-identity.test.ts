@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 
 import {
@@ -26,32 +27,54 @@ function mockIdentityModel(
   return new MockLanguageModelV4({
     provider: 'gateway',
     modelId: 'configured-model',
-    doGenerate: async () => ({
-      content: [{ type: 'text', text: JSON.stringify(inference) }],
-      finishReason: { unified: 'stop', raw: undefined },
-      usage,
+    doStream: async () => ({
+      stream: simulateReadableStream({
+        chunks: [
+          {
+            type: 'response-metadata',
+            ...(options.requestId ? { id: options.requestId } : {}),
+            ...(options.responseModel
+              ? { modelId: options.responseModel }
+              : {}),
+          },
+          { type: 'text-start', id: 'identity' },
+          {
+            type: 'text-delta',
+            id: 'identity',
+            delta: JSON.stringify(inference),
+          },
+          { type: 'text-end', id: 'identity' },
+          {
+            type: 'finish',
+            finishReason: { unified: 'stop', raw: undefined },
+            logprobs: undefined,
+            usage,
+          },
+        ],
+      }),
       warnings: [],
-      response: {
-        id: options.requestId,
-        modelId: options.responseModel,
-      },
     }),
   });
 }
 
 const kindleInference = {
-  level: 'product_family',
-  category: 'e-reader',
-  brand: 'Amazon',
-  productName: 'Kindle',
-  model: null,
-  variant: null,
-  confidence: 0.82,
-  visibleText: ['kindle'],
-  searchQuery: 'Amazon Kindle e-reader',
+  candidate: {
+    level: 'product_family',
+    category: 'e-reader',
+    brand: 'Amazon',
+    productName: 'Kindle',
+    model: null,
+    variant: null,
+    confidence: 0.82,
+  },
+  signals: {
+    visibleText: ['kindle'],
+    searchQuery: 'Amazon Kindle e-reader',
+  },
 };
 
 test('sends a JPEG directly to the AI SDK and returns structured identity metadata', async () => {
+  const partials: Array<Record<string, unknown>> = [];
   const model = mockIdentityModel(kindleInference, {
     requestId: 'gateway-request-1',
     responseModel: 'google/gemini-3.7-flash',
@@ -65,12 +88,15 @@ test('sends a JPEG directly to the AI SDK and returns structured identity metada
         },
       ],
     },
-    { model: 'google/gemini-3.7-flash' },
+    {
+      model: 'google/gemini-3.7-flash',
+      onPartialInference: (partial) => partials.push(partial),
+    },
     { languageModel: model },
   );
 
-  assert.equal(model.doGenerateCalls.length, 1);
-  const call = model.doGenerateCalls[0];
+  assert.equal(model.doStreamCalls.length, 1);
+  const call = model.doStreamCalls[0];
   assert.equal(call?.responseFormat?.type, 'json');
   assert.equal(call?.reasoning, 'minimal');
   const message = call?.prompt[0];
@@ -85,6 +111,9 @@ test('sends a JPEG directly to the AI SDK and returns structured identity metada
   assert.equal(result.model, 'google/gemini-3.7-flash');
   assert.equal(result.inference.productName, 'Kindle');
   assert.equal(result.reportedConfidence, 0.82);
+  assert.ok(result.partialLatencyMs !== undefined);
+  assert.equal(partials.length, 1);
+  assert.equal(partials[0]?.productName, 'Kindle');
 });
 
 test('fails before making a request when Gateway credentials are missing', async () => {
@@ -112,9 +141,12 @@ test('fails before making a request when Gateway credentials are missing', async
 
 test('maps invalid structured model output to provider_error', async () => {
   const model = mockIdentityModel({
-    level: 'product_family',
-    category: 'controller',
-    confidence: 84,
+    candidate: {
+      level: 'product_family',
+      category: 'controller',
+      confidence: 84,
+    },
+    signals: { visibleText: [] },
   });
 
   await assert.rejects(
@@ -130,7 +162,7 @@ test('maps invalid structured model output to provider_error', async () => {
 
 test('maps an aborted model request to provider_timeout', async () => {
   const model = new MockLanguageModelV4({
-    doGenerate: async ({ abortSignal }) =>
+    doStream: async ({ abortSignal }) =>
       await new Promise((_, reject) => {
         abortSignal?.addEventListener(
           'abort',
@@ -153,17 +185,21 @@ test('maps an aborted model request to provider_timeout', async () => {
 
 test('sends up to three same-item views and preserves confidence guardrails', async () => {
   const model = mockIdentityModel({
-    level: 'product_family',
-    category: 'game controller',
-    brand: 'Sony',
-    productName: 'DualSense',
-    model: null,
-    variant: 'white',
-    confidence: 0.93,
-    visibleText: [],
-    visualEvidence: ['symmetrical analog sticks', 'large central touchpad'],
-    alternative: 'Xbox Wireless Controller lacks the central touchpad',
-    searchQuery: 'Sony DualSense white controller',
+    candidate: {
+      level: 'product_family',
+      category: 'game controller',
+      brand: 'Sony',
+      productName: 'DualSense',
+      model: null,
+      variant: 'white',
+      confidence: 0.93,
+    },
+    signals: {
+      visibleText: [],
+      visualEvidence: ['symmetrical analog sticks', 'large central touchpad'],
+      alternative: 'Xbox Wireless Controller lacks the central touchpad',
+      searchQuery: 'Sony DualSense white controller',
+    },
   });
   const result = await identifyVisualItem(
     {
@@ -176,7 +212,7 @@ test('sends up to three same-item views and preserves confidence guardrails', as
     { languageModel: model },
   );
 
-  const content = model.doGenerateCalls[0]?.prompt[0]?.content;
+  const content = model.doStreamCalls[0]?.prompt[0]?.content;
   assert.ok(Array.isArray(content));
   assert.equal(content.filter((part) => part.type === 'file').length, 3);
   assert.equal(result.reportedConfidence, 0.93);

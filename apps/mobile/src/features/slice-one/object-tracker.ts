@@ -100,13 +100,18 @@ export function updateObjectTracker(
 
   if (current) {
     const matchingDetection = candidates
-      .filter((candidate) => candidate.label === current.label)
       .map((candidate) => ({
         candidate,
         iou: intersectionOverUnion(candidate.bbox, current.bbox),
       }))
       .filter(({ iou }) => iou >= OBJECT_TRACKER_POLICY.matchIou)
-      .sort((left, right) => right.iou - left.iou || right.candidate.score - left.candidate.score)[0]
+      .sort(
+        (left, right) =>
+          right.iou - left.iou ||
+          Number(right.candidate.label === current.label) -
+            Number(left.candidate.label === current.label) ||
+          right.candidate.score - left.candidate.score
+      )[0]
       ?.candidate;
 
     if (matchingDetection) {

@@ -12,7 +12,6 @@ import {
 import { Platform } from 'react-native';
 import {
   type CameraObjectOutput,
-  CommonResolutions,
   type InterruptionReason,
   type ScannedObject,
   type ScannedObjectType,
@@ -36,7 +35,7 @@ import type {
 import type { SliceTrace } from './trace';
 
 const PHOTO_PREVIEW_SIZE = { width: 320, height: 320 };
-const IDENTIFICATION_PHOTO_SIZE = CommonResolutions.HD_4_3;
+const IDENTIFICATION_PHOTO_SIZE = { width: 1024, height: 768 };
 export const SALIENT_OBJECT_TYPE: ScannedObjectType = 'salient-object';
 const SALIENT_OBJECT_TYPES: ScannedObjectType[] = [SALIENT_OBJECT_TYPE];
 

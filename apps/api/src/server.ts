@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { loadEnvFile } from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { createDatabaseClient } from './database/client.ts';
 import { createApiServer } from './runtime.ts';
 
 const envPath = fileURLToPath(new URL('../.env', import.meta.url));
@@ -25,9 +26,12 @@ function readPort(value: string | undefined): number {
 
 const hostname = process.env.HOST ?? '0.0.0.0';
 const port = readPort(process.env.PORT);
+const databaseClient =
+  process.env.DATABASE_URL === undefined ? undefined : createDatabaseClient();
 let isShuttingDown = false;
 
 const server = createApiServer({
+  database: databaseClient?.db,
   hostname,
   port,
   onListening: ({ address, port: listeningPort }) => {
@@ -42,11 +46,12 @@ function shutdown(signal: NodeJS.Signals, activeServer: ServerType): void {
 
   isShuttingDown = true;
   console.info(`Received ${signal}; closing Snap API`);
-  activeServer.close((error) => {
+  activeServer.close(async (error) => {
     if (error) {
       console.error('Snap API shutdown failed', error);
       process.exitCode = 1;
     }
+    await databaseClient?.close();
   });
 }
 
