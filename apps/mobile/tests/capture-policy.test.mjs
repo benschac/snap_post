@@ -9,11 +9,18 @@ import {
 } from '../src/features/slice-one/capture-policy.ts';
 import { analysisStride } from '../src/features/slice-one/analysis-profile.ts';
 import {
+  captureProposalGuidance,
+  createDetectionOverlay,
+  evaluateLabelAgnosticProposal,
+  mapDetectionOverlayToPreview,
+} from '../src/features/slice-one/label-agnostic-proposal.ts';
+import {
   INITIAL_OBJECT_TRACKER_STATE,
   intersectionOverUnion,
   updateObjectTracker,
 } from '../src/features/slice-one/object-tracker.ts';
 import { analyzeBgraPixels } from '../src/features/slice-one/rgb-quality.ts';
+import { computeScanGuideLayout } from '../src/features/slice-one/scan-guide-layout.ts';
 import { summarizeCaptureLifecycle } from '../src/features/slice-one/session-summary.ts';
 
 function sample(overrides = {}) {
@@ -28,6 +35,10 @@ function sample(overrides = {}) {
     trackId: 'track-1',
     ...overrides,
   };
+}
+
+function assertApproximatelyEqual(actual, expected) {
+  assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} should be approximately ${expected}`);
 }
 
 function stabilize(state, selected = []) {
@@ -52,6 +63,73 @@ test('resets stability after a poor frame', () => {
   const rejected = evaluateCapture(almostStable, sample({ motion: 30 }), [], false);
   assert.deepEqual(rejected.decision, { action: 'hold', reason: 'quality' });
   assert.equal(rejected.state.stableFrames, 0);
+});
+
+test('uses the freed preview space when diagnostic panels are collapsed', () => {
+  const guide = computeScanGuideLayout({
+    previewHeight: 1_490,
+    previewWidth: 690,
+    topPanelBottom: 80,
+    bottomPanelTop: 1_340,
+  });
+
+  assert.equal(guide.width, 630);
+  assert.equal(guide.top, 237.5);
+  assert.equal(guide.height, 945);
+  assert.equal(guide.top + guide.height, 1_182.5);
+});
+
+test('maps detector proposal outcomes to concise framing guidance', () => {
+  assert.equal(captureProposalGuidance('area-low'), 'Move closer');
+  assert.equal(captureProposalGuidance('area-high'), 'Move farther away');
+  assert.equal(captureProposalGuidance('center-outside'), 'Center the item');
+  assert.equal(
+    captureProposalGuidance('edge-proximity'),
+    'Keep the whole item in frame'
+  );
+  assert.equal(captureProposalGuidance('no-detections'), 'Center one item');
+});
+
+test('creates an overlay only for a drawable detector proposal', () => {
+  const accepted = evaluateLabelAgnosticProposal(
+    [{ bbox: { x1: 200, y1: 100, x2: 440, y2: 260 }, label: 'book', score: 0.8 }],
+    640,
+    360
+  );
+
+  assert.deepEqual(createDetectionOverlay(accepted, 640, 360), {
+    accepted: true,
+    bbox: { x1: 200, y1: 100, x2: 440, y2: 260 },
+    frameHeight: 360,
+    frameWidth: 640,
+  });
+  assert.equal(
+    createDetectionOverlay({ candidate: null, outcome: 'no-detections' }, 640, 360),
+    null
+  );
+});
+
+test('maps detector coordinates through preview aspect-fill crop and mirroring', () => {
+  const overlay = {
+    accepted: false,
+    bbox: { x1: 100, y1: 200, x2: 300, y2: 600 },
+    frameHeight: 1_280,
+    frameWidth: 720,
+  };
+
+  const back = mapDetectionOverlayToPreview(overlay, 390, 844, false);
+  const front = mapDetectionOverlayToPreview(overlay, 390, 844, true);
+
+  assert.equal(back.color, '#F6C85F');
+  assertApproximatelyEqual(back.height, 263.75);
+  assertApproximatelyEqual(back.width, 131.875);
+  assertApproximatelyEqual(back.x, 23.5625);
+  assertApproximatelyEqual(back.y, 131.875);
+  assert.equal(front.color, '#F6C85F');
+  assertApproximatelyEqual(front.height, 263.75);
+  assertApproximatelyEqual(front.width, 131.875);
+  assertApproximatelyEqual(front.x, 234.5625);
+  assertApproximatelyEqual(front.y, 131.875);
 });
 
 test('requires a visible object and restabilizes when the track changes', () => {

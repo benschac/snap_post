@@ -22,6 +22,7 @@ export type ObjectTrackerState = {
 };
 
 export const OBJECT_TRACKER_POLICY = {
+  excludedLabels: ['person'] as readonly string[],
   matchIou: 0.25,
   maximumMissedFrames: 3,
   minimumScore: 0.5,
@@ -69,6 +70,7 @@ function isValidDetection(detection: DetectionCandidate) {
     Number.isFinite(detection.score) &&
     detection.score >= OBJECT_TRACKER_POLICY.minimumScore &&
     detection.label.length > 0 &&
+    !OBJECT_TRACKER_POLICY.excludedLabels.includes(detection.label) &&
     boxArea(detection.bbox) > 0
   );
 }

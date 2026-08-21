@@ -12,6 +12,9 @@ import {
   type SelectedCapture,
 } from '../slice-one/capture-policy';
 import {
+  captureProposalGuidance,
+  createDetectionOverlay,
+  type DetectionOverlay,
   evaluateInventoryCaptureProposal,
   evaluateLabelAgnosticProposal,
   resolveObjectDetectionFrameSize,
@@ -79,6 +82,7 @@ type UseSliceOneAnalysisPolicyOptions = {
   activeItemRef: RefObject<SessionItem>;
   captureInFlightRef: RefObject<boolean>;
   detectorReady: boolean;
+  detectionOverlay: SharedValue<DetectionOverlay | null>;
   handleAnalysisFrame: (frameProcessingStartedAtMs: number) => boolean;
   isCameraSwitching: () => boolean;
   previousFrameSignature: SharedValue<number[]>;
@@ -97,6 +101,7 @@ export function useSliceOneAnalysisPolicy({
   activeItemRef,
   captureInFlightRef,
   detectorReady,
+  detectionOverlay,
   handleAnalysisFrame,
   isCameraSwitching,
   previousFrameSignature,
@@ -135,8 +140,9 @@ export function useSliceOneAnalysisPolicy({
     salientObjectCapturePolicyRef.current = INITIAL_CAPTURE_POLICY_STATE;
     salientObjectObservationRef.current = null;
     salientObjectTrackerRef.current = INITIAL_OBJECT_TRACKER_STATE;
+    detectionOverlay.value = null;
     previousFrameSignature.value = [];
-  }, [previousFrameSignature]);
+  }, [detectionOverlay, previousFrameSignature]);
 
   const resetItemTracking = useCallback(() => {
     resetCameraTracking();
@@ -196,6 +202,11 @@ export function useSliceOneAnalysisPolicy({
     );
     const captureProposal = evaluateInventoryCaptureProposal(
       sample.detections,
+      detectionFrameSize.width,
+      detectionFrameSize.height
+    );
+    detectionOverlay.value = createDetectionOverlay(
+      captureProposal,
       detectionFrameSize.width,
       detectionFrameSize.height
     );
@@ -489,7 +500,9 @@ export function useSliceOneAnalysisPolicy({
         busy: 'Saving selected photo',
         cooldown: 'Move to another angle',
         duplicate: 'View is too similar',
-        'no-object': detectorReady ? 'Center one object' : 'Preparing object detector',
+        'no-object': detectorReady
+          ? captureProposalGuidance(captureProposal.outcome)
+          : 'Preparing object detector',
         quality: 'Hold steady in even light',
         stabilizing: 'Stable — keep holding',
       } as const;
@@ -503,6 +516,7 @@ export function useSliceOneAnalysisPolicy({
     activeItemRef,
     captureInFlightRef,
     detectorReady,
+    detectionOverlay,
     handleAnalysisFrame,
     isCameraSwitching,
     requestAutoCapture,

@@ -1,6 +1,7 @@
 import type { Observable } from '@legendapp/state';
 import { useValue } from '@legendapp/state/react';
 import { Canvas, Circle, Line, RoundedRect, vec } from '@shopify/react-native-skia';
+import { useState } from 'react';
 import {
   ActivityIndicator,
   type LayoutChangeEvent,
@@ -10,11 +11,17 @@ import {
   View,
 } from 'react-native';
 import { NitroImage, type Image } from 'react-native-nitro-image';
+import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
 
 import {
   ANALYSIS_TARGET_FPS_OPTIONS,
   type AnalysisTargetFps,
 } from '../slice-one/analysis-profile';
+import {
+  LABEL_AGNOSTIC_PROPOSAL_POLICY,
+  mapDetectionOverlayToPreview,
+  type DetectionOverlay,
+} from '../slice-one/label-agnostic-proposal';
 import {
   SCAN_GUIDE_HORIZONTAL_INSET,
   type ScanGuideLayout,
@@ -113,20 +120,52 @@ function AnalysisProfileButton({
 }
 
 export function SliceOneScanGuide({
+  detectionOverlay,
   previewHeight,
   previewWidth,
   scanGuide,
   state$,
 }: {
+  detectionOverlay: SharedValue<DetectionOverlay | null>;
   previewHeight: number;
   previewWidth: number;
   scanGuide: ScanGuideLayout;
   state$: Observable<SliceOneViewState>;
 }) {
+  const sessionState = useValue(state$.sessionState);
+  const qualityGateStatus = useValue(state$.qualityGateStatus);
+  const cameraPosition = useValue(state$.cameraPosition);
   const overlayColor = useValue(() => {
     if (state$.sessionState.get() !== 'running') return '#A8B1C4';
     return state$.metrics.qualityScore.get() >= 0.56 ? '#6DF5A8' : '#F6C85F';
   });
+  const detectionRect = useDerivedValue(
+    () =>
+      mapDetectionOverlayToPreview(
+        detectionOverlay.value,
+        previewWidth,
+        previewHeight,
+        cameraPosition === 'front'
+      ),
+    [cameraPosition, previewHeight, previewWidth]
+  );
+  const detectionX = useDerivedValue(() => detectionRect.value.x);
+  const detectionY = useDerivedValue(() => detectionRect.value.y);
+  const detectionWidth = useDerivedValue(() => detectionRect.value.width);
+  const detectionHeight = useDerivedValue(() => detectionRect.value.height);
+  const detectionColor = useDerivedValue(() => detectionRect.value.color);
+  const centerTargetX =
+    previewWidth * LABEL_AGNOSTIC_PROPOSAL_POLICY.centerMinimumXRatio;
+  const centerTargetY =
+    previewHeight * LABEL_AGNOSTIC_PROPOSAL_POLICY.centerMinimumYRatio;
+  const centerTargetWidth =
+    previewWidth *
+    (LABEL_AGNOSTIC_PROPOSAL_POLICY.centerMaximumXRatio -
+      LABEL_AGNOSTIC_PROPOSAL_POLICY.centerMinimumXRatio);
+  const centerTargetHeight =
+    previewHeight *
+    (LABEL_AGNOSTIC_PROPOSAL_POLICY.centerMaximumYRatio -
+      LABEL_AGNOSTIC_PROPOSAL_POLICY.centerMinimumYRatio);
 
   return (
     <View pointerEvents="none" style={styles.scanGuideLayer}>
@@ -141,6 +180,30 @@ export function SliceOneScanGuide({
           style="stroke"
           strokeWidth={3}
         />
+        {sessionState === 'running' ? (
+          <>
+            <RoundedRect
+              x={centerTargetX}
+              y={centerTargetY}
+              width={centerTargetWidth}
+              height={centerTargetHeight}
+              r={20}
+              color="rgba(255, 255, 255, 0.28)"
+              style="stroke"
+              strokeWidth={1}
+            />
+            <RoundedRect
+              x={detectionX}
+              y={detectionY}
+              width={detectionWidth}
+              height={detectionHeight}
+              r={16}
+              color={detectionColor}
+              style="stroke"
+              strokeWidth={3}
+            />
+          </>
+        ) : null}
         <Circle
           cx={previewWidth / 2}
           cy={scanGuide.top + scanGuide.height / 2}
@@ -160,6 +223,15 @@ export function SliceOneScanGuide({
           strokeWidth={1}
         />
       </Canvas>
+      {sessionState === 'running' ? (
+        <View
+          style={[
+            styles.framingGuidance,
+            { top: Math.max(10, scanGuide.top + 10) },
+          ]}>
+          <Text style={styles.framingGuidanceText}>{qualityGateStatus}</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -172,6 +244,7 @@ export function SliceOneStatusPanel({
   primaryPreviewImage,
   qualityFrameSize,
   state$,
+  topInset,
 }: {
   detectorError: boolean;
   detectorReady: boolean;
@@ -180,27 +253,33 @@ export function SliceOneStatusPanel({
   primaryPreviewImage?: Image;
   qualityFrameSize: number;
   state$: Observable<SliceOneViewState>;
+  topInset: number;
 }) {
-  const sessionState = useValue(state$.sessionState);
-  const currentItemIndex = useValue(state$.currentItemIndex);
-  const qualityGateStatus = useValue(state$.qualityGateStatus);
   const cameraReady = useValue(
     () => state$.cameraConfigured.get() && state$.cameraPreviewStarted.get()
   );
   const metrics = useValue(state$.metrics);
   const hasAudio = useValue(() => state$.audioStats.get() !== null);
+  const [statusExpanded, setStatusExpanded] = useState(false);
 
   return (
-    <View style={styles.topPanel} onLayout={onLayout}>
-      <View style={styles.headingRow}>
-        <View>
-          <Text style={styles.eyebrow}>SLICE 1 · ZERO-TAP CAPTURE</Text>
-          <Text style={styles.heading}>
-            {sessionState === 'running'
-              ? `Item ${currentItemIndex} · ${qualityGateStatus}`
-              : 'Ready to scan'}
-          </Text>
-        </View>
+    <View
+      style={[styles.topPanel, { top: Math.max(14, topInset + 8) }]}
+      onLayout={onLayout}>
+      <View style={styles.topPanelHeader}>
+        <Pressable
+          accessibilityLabel={`${statusExpanded ? 'Hide' : 'Show'} capture status`}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: statusExpanded }}
+          hitSlop={8}
+          onPress={() => setStatusExpanded((expanded) => !expanded)}
+          style={({ pressed }) => [
+            styles.statusToggle,
+            pressed && styles.actionButtonPressed,
+          ]}>
+          <Text style={styles.statusToggleText}>Capture status</Text>
+          <Text style={styles.statusChevron}>{statusExpanded ? '⌄' : '›'}</Text>
+        </Pressable>
         {primaryPreviewImage ? (
           <NitroImage image={primaryPreviewImage} style={styles.thumbnail} />
         ) : latestImage ? (
@@ -208,57 +287,63 @@ export function SliceOneStatusPanel({
         ) : null}
       </View>
 
-      <View style={styles.gateRow}>
-        <GatePill label="Camera" status={cameraReady ? 'ready' : 'pending'} />
-        <GatePill
-          label="Worklet"
-          status={metrics.analysisAccepted > 0 ? 'ready' : 'pending'}
-        />
-        <GatePill
-          label="RGB sample"
-          status={
-            metrics.resizeResult === `${qualityFrameSize}×${qualityFrameSize}`
-              ? 'ready'
-              : 'pending'
-          }
-        />
-        <GatePill
-          label="Quality"
-          status={metrics.qualityScore >= 0.56 ? 'ready' : 'pending'}
-        />
-        <GatePill
-          label="Barcode"
-          status={metrics.barcodeScans > 0 ? 'ready' : 'pending'}
-        />
-        <GatePill
-          label="Detector"
-          status={detectorError ? 'error' : detectorReady ? 'ready' : 'pending'}
-        />
-        <GatePill label="PCM" status={hasAudio ? 'ready' : 'pending'} />
-      </View>
+      {statusExpanded ? (
+        <View style={styles.statusContent}>
+          <View style={styles.gateRow}>
+            <GatePill label="Camera" status={cameraReady ? 'ready' : 'pending'} />
+            <GatePill
+              label="Worklet"
+              status={metrics.analysisAccepted > 0 ? 'ready' : 'pending'}
+            />
+            <GatePill
+              label="RGB sample"
+              status={
+                metrics.resizeResult === `${qualityFrameSize}×${qualityFrameSize}`
+                  ? 'ready'
+                  : 'pending'
+              }
+            />
+            <GatePill
+              label="Quality"
+              status={metrics.qualityScore >= 0.56 ? 'ready' : 'pending'}
+            />
+            <GatePill
+              label="Barcode"
+              status={metrics.barcodeScans > 0 ? 'ready' : 'pending'}
+            />
+            <GatePill
+              label="Detector"
+              status={detectorError ? 'error' : detectorReady ? 'ready' : 'pending'}
+            />
+            <GatePill label="PCM" status={hasAudio ? 'ready' : 'pending'} />
+          </View>
 
-      <View style={styles.metricsGrid}>
-        <View style={styles.metricCell}>
-          <Text style={styles.metricValue}>{(metrics.qualityScore * 100).toFixed(0)}%</Text>
-          <Text style={styles.metricLabel}>quality</Text>
+          <View style={styles.metricsGrid}>
+            <View style={styles.metricCell}>
+              <Text style={styles.metricValue}>
+                {(metrics.qualityScore * 100).toFixed(0)}%
+              </Text>
+              <Text style={styles.metricLabel}>quality</Text>
+            </View>
+            <View style={styles.metricCell}>
+              <Text style={styles.metricValue}>{metrics.sharpness.toFixed(1)}</Text>
+              <Text style={styles.metricLabel}>sharpness</Text>
+            </View>
+            <View style={styles.metricCell}>
+              <Text style={styles.metricValue}>{metrics.motion.toFixed(1)}</Text>
+              <Text style={styles.metricLabel}>motion</Text>
+            </View>
+            <View style={styles.metricCell}>
+              <Text style={styles.metricValue}>{metrics.droppedFrames}</Text>
+              <Text style={styles.metricLabel}>dropped</Text>
+            </View>
+            <View style={styles.metricCell}>
+              <Text style={styles.metricValue}>{metrics.detectionCount}</Text>
+              <Text style={styles.metricLabel}>objects</Text>
+            </View>
+          </View>
         </View>
-        <View style={styles.metricCell}>
-          <Text style={styles.metricValue}>{metrics.sharpness.toFixed(1)}</Text>
-          <Text style={styles.metricLabel}>sharpness</Text>
-        </View>
-        <View style={styles.metricCell}>
-          <Text style={styles.metricValue}>{metrics.motion.toFixed(1)}</Text>
-          <Text style={styles.metricLabel}>motion</Text>
-        </View>
-        <View style={styles.metricCell}>
-          <Text style={styles.metricValue}>{metrics.droppedFrames}</Text>
-          <Text style={styles.metricLabel}>dropped</Text>
-        </View>
-        <View style={styles.metricCell}>
-          <Text style={styles.metricValue}>{metrics.detectionCount}</Text>
-          <Text style={styles.metricLabel}>objects</Text>
-        </View>
-      </View>
+      ) : null}
     </View>
   );
 }
@@ -324,96 +409,25 @@ export function SliceOneControlsPanel({
   const isCapturing = useValue(state$.isCapturing);
   const cameraPosition = useValue(state$.cameraPosition);
   const modelProbeRequested = useValue(state$.modelProbeRequested);
+  const [diagnosticsExpanded, setDiagnosticsExpanded] = useState(false);
   const soakProgress = Math.min(1, elapsedMs / soakTargetMs);
   const cameraFlipDisabled =
     !nextCameraAvailable ||
     isCapturing ||
     sessionState === 'starting' ||
     sessionState === 'stopping';
+  const diagnosticsSummary = errorMessage
+    ? 'error'
+    : !detectorReady && !detectorError
+      ? `detector ${(detectorDownloadProgress * 100).toFixed(0)}%`
+      : modelProbeRequested && !classificationReady && !classificationError
+        ? `library ${(classificationDownloadProgress * 100).toFixed(0)}%`
+        : null;
 
   return (
     <View
       style={[styles.bottomPanel, { bottom: Math.max(10, bottomInset + 8) }]}
       onLayout={onLayout}>
-      <View style={styles.soakHeader}>
-        <View>
-          <Text style={styles.soakTime}>
-            {formatDuration(elapsedMs)} / {formatDuration(soakTargetMs)}
-          </Text>
-          <Text style={styles.soakLabel}>
-            {elapsedMs >= soakTargetMs ? 'Soak target met' : 'Physical-device soak'}
-          </Text>
-        </View>
-        <Text style={styles.telemetryText}>
-          {telemetry?.thermalState ?? 'thermal n/a'} ·{' '}
-          {formatBytes(telemetry?.residentMemoryBytes ?? 0)}
-        </Text>
-      </View>
-      <View style={styles.progressTrack}>
-        <View style={[styles.progressFill, { width: `${soakProgress * 100}%` }]} />
-      </View>
-
-      <Text style={styles.detailText} numberOfLines={1}>
-        Brightness {metrics.brightness.toFixed(0)} · clipped{' '}
-        {(metrics.clippedRatio * 100).toFixed(0)}% · gate p95 {metrics.gateP95Ms.toFixed(1)} ms
-      </Text>
-      <Text style={styles.detailText} numberOfLines={1}>
-        Selected {selectedCaptures}/3 · completed items {completedItems} · analysis{' '}
-        {metrics.analysisFps.toFixed(1)}/{analysisTargetFps} fps
-      </Text>
-      <Text style={styles.detailText} numberOfLines={1}>
-        Object {metrics.objectLabel} {(metrics.objectConfidence * 100).toFixed(0)}% ·{' '}
-        {metrics.trackId}
-      </Text>
-      <Text style={styles.detailText} numberOfLines={2}>
-        {modelResult}
-      </Text>
-      <Text style={styles.detailText} numberOfLines={2}>
-        {identificationStatus}
-      </Text>
-      <Text style={styles.detailText} numberOfLines={1}>
-        {captureStatus} · PCM chunks {audioStats?.chunkIndex ?? 0}
-      </Text>
-      {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
-      {exportUri ? (
-        <Text selectable style={styles.exportText} numberOfLines={2}>
-          Trace: {exportUri}
-        </Text>
-      ) : null}
-
-      <View style={styles.profileRow}>
-        <Text style={styles.profileLabel}>ANALYSIS PROFILE</Text>
-        {ANALYSIS_TARGET_FPS_OPTIONS.map((fps) => (
-          <AnalysisProfileButton
-            key={fps}
-            disabled={sessionState !== 'idle'}
-            fps={fps}
-            selected={analysisTargetFps === fps}
-            onPress={() => onAnalysisTargetFpsChange(fps)}
-          />
-        ))}
-      </View>
-
-      <View style={styles.cameraControlRow}>
-        <View>
-          <Text style={styles.cameraControlLabel}>CAMERA</Text>
-          <Text style={styles.cameraControlValue}>{cameraPosition.toUpperCase()}</Text>
-        </View>
-        <Pressable
-          accessibilityLabel={`Use ${nextCameraPosition} camera`}
-          accessibilityRole="button"
-          accessibilityState={{ disabled: cameraFlipDisabled }}
-          disabled={cameraFlipDisabled}
-          onPress={onFlipCamera}
-          style={({ pressed }) => [
-            styles.cameraFlipButton,
-            pressed && !cameraFlipDisabled && styles.actionButtonPressed,
-            cameraFlipDisabled && styles.actionButtonDisabled,
-          ]}>
-          <Text style={styles.cameraFlipButtonText}>Use {nextCameraPosition} camera</Text>
-        </Pressable>
-      </View>
-
       <View style={styles.controls}>
         {sessionState === 'idle' ? (
           <ActionButton label="Start" tone="primary" onPress={onStart} />
@@ -442,19 +456,116 @@ export function SliceOneControlsPanel({
         />
       </View>
 
-      {!detectorReady && !detectorError ? (
-        <View style={styles.modelLoading}>
-          <ActivityIndicator color="#C9D5EA" size="small" />
-          <Text style={styles.modelLoadingText}>
-            Downloading object detector {(detectorDownloadProgress * 100).toFixed(0)}%
+      <Pressable
+        accessibilityLabel={`${diagnosticsExpanded ? 'Hide' : 'Show'} developer diagnostics`}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: diagnosticsExpanded }}
+        hitSlop={8}
+        onPress={() => setDiagnosticsExpanded((expanded) => !expanded)}
+        style={({ pressed }) => [styles.diagnosticsToggle, pressed && styles.actionButtonPressed]}>
+        <Text style={styles.diagnosticsToggleText}>
+          Diagnostics{diagnosticsSummary ? ` · ${diagnosticsSummary}` : ''}
+        </Text>
+        <Text style={styles.diagnosticsChevron}>{diagnosticsExpanded ? '⌄' : '›'}</Text>
+      </Pressable>
+
+      {diagnosticsExpanded ? (
+        <View style={styles.diagnosticsContent}>
+          <View style={styles.soakHeader}>
+            <View>
+              <Text style={styles.soakTime}>
+                {formatDuration(elapsedMs)} / {formatDuration(soakTargetMs)}
+              </Text>
+              <Text style={styles.soakLabel}>
+                {elapsedMs >= soakTargetMs ? 'Soak target met' : 'Physical-device soak'}
+              </Text>
+            </View>
+            <Text style={styles.telemetryText}>
+              {telemetry?.thermalState ?? 'thermal n/a'} ·{' '}
+              {formatBytes(telemetry?.residentMemoryBytes ?? 0)}
+            </Text>
+          </View>
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${soakProgress * 100}%` }]} />
+          </View>
+
+          <Text style={styles.detailText} numberOfLines={1}>
+            Brightness {metrics.brightness.toFixed(0)} · clipped{' '}
+            {(metrics.clippedRatio * 100).toFixed(0)}% · gate p95{' '}
+            {metrics.gateP95Ms.toFixed(1)} ms
           </Text>
-        </View>
-      ) : modelProbeRequested && !classificationReady && !classificationError ? (
-        <View style={styles.modelLoading}>
-          <ActivityIndicator color="#C9D5EA" size="small" />
-          <Text style={styles.modelLoadingText}>
-            Downloading library model {(classificationDownloadProgress * 100).toFixed(0)}%
+          <Text style={styles.detailText} numberOfLines={1}>
+            Selected {selectedCaptures}/3 · completed items {completedItems} · analysis{' '}
+            {metrics.analysisFps.toFixed(1)}/{analysisTargetFps} fps
           </Text>
+          <Text style={styles.detailText} numberOfLines={1}>
+            Object {metrics.objectLabel} {(metrics.objectConfidence * 100).toFixed(0)}% ·{' '}
+            {metrics.trackId}
+          </Text>
+          <Text style={styles.detailText} numberOfLines={2}>
+            {modelResult}
+          </Text>
+          <Text style={styles.detailText} numberOfLines={2}>
+            {identificationStatus}
+          </Text>
+          <Text style={styles.detailText} numberOfLines={1}>
+            {captureStatus} · PCM chunks {audioStats?.chunkIndex ?? 0}
+          </Text>
+          {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+          {exportUri ? (
+            <Text selectable style={styles.exportText} numberOfLines={2}>
+              Trace: {exportUri}
+            </Text>
+          ) : null}
+
+          <View style={styles.profileRow}>
+            <Text style={styles.profileLabel}>ANALYSIS PROFILE</Text>
+            {ANALYSIS_TARGET_FPS_OPTIONS.map((fps) => (
+              <AnalysisProfileButton
+                key={fps}
+                disabled={sessionState !== 'idle'}
+                fps={fps}
+                selected={analysisTargetFps === fps}
+                onPress={() => onAnalysisTargetFpsChange(fps)}
+              />
+            ))}
+          </View>
+
+          <View style={styles.cameraControlRow}>
+            <View>
+              <Text style={styles.cameraControlLabel}>CAMERA</Text>
+              <Text style={styles.cameraControlValue}>{cameraPosition.toUpperCase()}</Text>
+            </View>
+            <Pressable
+              accessibilityLabel={`Use ${nextCameraPosition} camera`}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: cameraFlipDisabled }}
+              disabled={cameraFlipDisabled}
+              onPress={onFlipCamera}
+              style={({ pressed }) => [
+                styles.cameraFlipButton,
+                pressed && !cameraFlipDisabled && styles.actionButtonPressed,
+                cameraFlipDisabled && styles.actionButtonDisabled,
+              ]}>
+              <Text style={styles.cameraFlipButtonText}>Use {nextCameraPosition} camera</Text>
+            </Pressable>
+          </View>
+
+          {!detectorReady && !detectorError ? (
+            <View style={styles.modelLoading}>
+              <ActivityIndicator color="#C9D5EA" size="small" />
+              <Text style={styles.modelLoadingText}>
+                Downloading object detector {(detectorDownloadProgress * 100).toFixed(0)}%
+              </Text>
+            </View>
+          ) : modelProbeRequested && !classificationReady && !classificationError ? (
+            <View style={styles.modelLoading}>
+              <ActivityIndicator color="#C9D5EA" size="small" />
+              <Text style={styles.modelLoadingText}>
+                Downloading library model {(classificationDownloadProgress * 100).toFixed(0)}%
+              </Text>
+            </View>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -466,40 +577,65 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFill,
     zIndex: 1,
   },
+  framingGuidance: {
+    position: 'absolute',
+    alignSelf: 'center',
+    maxWidth: '78%',
+    minHeight: 28,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    backgroundColor: 'rgba(8, 12, 19, 0.72)',
+  },
+  framingGuidanceText: {
+    color: '#F7FAFF',
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
   topPanel: {
     position: 'absolute',
     top: 14,
     left: 14,
     right: 14,
-    padding: 14,
-    borderRadius: 22,
+    padding: 8,
+    borderRadius: 18,
     backgroundColor: 'rgba(8, 12, 19, 0.82)',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(255, 255, 255, 0.18)',
     zIndex: 2,
   },
-  headingRow: {
+  topPanelHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12,
+    gap: 8,
   },
-  eyebrow: {
-    color: '#8FA2BF',
+  statusToggle: {
+    minHeight: 32,
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 6,
+  },
+  statusToggleText: {
+    color: '#AAB6C9',
     fontSize: 10,
     fontWeight: '700',
-    letterSpacing: 1.2,
   },
-  heading: {
-    color: '#F7FAFF',
+  statusChevron: {
+    color: '#AAB6C9',
     fontSize: 18,
-    fontWeight: '700',
-    marginTop: 3,
+    lineHeight: 18,
+  },
+  statusContent: {
+    paddingHorizontal: 6,
   },
   thumbnail: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
+    width: 40,
+    height: 40,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.35)',
   },
@@ -567,7 +703,7 @@ const styles = StyleSheet.create({
     left: 14,
     right: 14,
     bottom: 10,
-    padding: 14,
+    padding: 10,
     borderRadius: 22,
     backgroundColor: 'rgba(8, 12, 19, 0.9)',
     borderWidth: StyleSheet.hairlineWidth,
@@ -628,7 +764,29 @@ const styles = StyleSheet.create({
   controls: {
     flexDirection: 'row',
     gap: 8,
-    marginTop: 12,
+  },
+  diagnosticsToggle: {
+    minHeight: 28,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingTop: 5,
+  },
+  diagnosticsToggleText: {
+    color: '#AAB6C9',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  diagnosticsChevron: {
+    color: '#AAB6C9',
+    fontSize: 18,
+    lineHeight: 18,
+  },
+  diagnosticsContent: {
+    paddingTop: 6,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255, 255, 255, 0.12)',
   },
   profileRow: {
     flexDirection: 'row',

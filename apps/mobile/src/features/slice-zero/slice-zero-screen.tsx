@@ -28,7 +28,10 @@ import {
 } from 'react-native-vision-camera-barcode-scanner';
 
 import SnapNative from '../../../modules/snap-native/src/SnapNativeModule';
-import { LABEL_AGNOSTIC_PROPOSAL_POLICY } from '../slice-one/label-agnostic-proposal';
+import {
+  LABEL_AGNOSTIC_PROPOSAL_POLICY,
+  type DetectionOverlay,
+} from '../slice-one/label-agnostic-proposal';
 import { createCaptureItem } from '../slice-one/item-session';
 import {
   SliceOneControlsPanel,
@@ -103,6 +106,7 @@ export function SliceOneScreen() {
   );
 
   const previousFrameSignature = useSharedValue<number[]>([]);
+  const detectionOverlay = useSharedValue<DetectionOverlay | null>(null);
   const captureFeedback = useSharedValue(0);
 
   const {
@@ -232,6 +236,7 @@ export function SliceOneScreen() {
     activeItemRef,
     captureInFlightRef,
     detectorReady,
+    detectionOverlay,
     handleAnalysisFrame,
     isCameraSwitching,
     previousFrameSignature,
@@ -481,6 +486,7 @@ export function SliceOneScreen() {
       )}
 
       <SliceOneScanGuide
+        detectionOverlay={detectionOverlay}
         previewHeight={previewSize.height}
         previewWidth={previewSize.width}
         scanGuide={scanGuide}
@@ -499,6 +505,7 @@ export function SliceOneScreen() {
         primaryPreviewImage={selectedCaptures[0]?.previewImage}
         qualityFrameSize={QUALITY_FRAME_SIZE}
         state$={viewState$}
+        topInset={insets.top}
       />
       <SliceOneControlsPanel
         bottomInset={insets.bottom}
